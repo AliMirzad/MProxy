@@ -137,7 +137,15 @@ fn valid_id(id: &str) -> Result<(), ApiError> {
 
 impl Service {
     pub fn new(store: Store, xray_path: Option<PathBuf>, out: Sender<Vec<u8>>, tx: Sender<Msg>, timing: Timing) -> Service {
-        let xray_version = xray_path.as_deref().and_then(xray::version);
+        // A binary that fails the pinned-hash check is reported as unavailable (and every launch
+        // re-verifies, so it is never executed).
+        let xray_version = xray_path.as_deref().and_then(|p| match xray::verify(p) {
+            Ok(_) => Some(xray::PINNED_VERSION.trim_start_matches('v').to_string()),
+            Err(e) => {
+                log::error(format!("Xray unavailable: {e}"));
+                None
+            }
+        });
         if let Some(p) = &xray_path {
             xray::reap_orphans(store.dir(), p);
         }
@@ -213,7 +221,7 @@ impl Service {
             v["serverId"] = json!(id);
         }
         v["jetbrains"] = serde_json::to_value(&self.jetbrains).unwrap_or(Value::Null);
-        v["xrayAvailable"] = json!(self.xray_path.is_some());
+        v["xrayAvailable"] = json!(self.xray_version.is_some());
         v
     }
 
@@ -256,7 +264,7 @@ impl Service {
             "nativeVersion": crate::NATIVE_VERSION,
             "protocolVersion": crate::PROTOCOL_VERSION,
             "xrayVersion": self.xray_version,
-            "xrayAvailable": self.xray_path.is_some(),
+            "xrayAvailable": self.xray_version.is_some(),
             "platform": format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
             "keyStorage": self.store.key_storage(),
         });
@@ -572,6 +580,10 @@ impl Service {
             "logFile": log::log_path().map(|p| p.display().to_string()),
             "keyStorage": self.store.key_storage(),
             "xrayPid": self.run.as_ref().map(|r| r.pid),
+            "xrayVerified": self.xray_version.is_some(),
+            "xrayPinnedSha256": xray::PINNED_SHA256,
+            "xrayIsolation": self.run.as_ref().and_then(|r| r.isolation()),
+            "dataDirProtection": crate::harden::describe_dir(self.store.dir()),
             "debugLogging": debug,
             // Recent Xray output is shown only in debug mode (it can contain destinations).
             "recentXrayOutput": if debug { self.last_xray_error.clone() } else { vec![] },
@@ -706,6 +718,9 @@ impl Service {
         let Some(xray_path) = self.xray_path.clone() else {
             return self.fail(ErrorCode::XrayMissing, "Xray is missing from the native runtime. Reinstall the runtime.", Some(sid));
         };
+        if let Err(e) = xray::verify(&xray_path) {
+            return self.fail(ErrorCode::XrayFailed, format!("Xray integrity check failed: {e}"), Some(sid));
+        }
         let s = self.settings();
         let jb = self.jetbrains_plan(&s);
         let mut last_err = String::new();

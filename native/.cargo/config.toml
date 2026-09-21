@@ -1,14 +1,19 @@
 # Windows builds with llvm-mingw (gnullvm): link libunwind statically so the helper needs no
 # DLLs beyond the OS (UCRT api-ms-win-crt-* ships with Windows 10/11).
+#
+# DependentLoadFlags = LOAD_LIBRARY_SEARCH_SYSTEM32 (0x800): the loader resolves our static DLL
+# imports (secur32, bcrypt, crypt32, ... are not KnownDLLs) from System32 only, never from the
+# executable's directory. Without it, a DLL planted next to the helper (e.g. in the Downloads
+# folder the runtime package was extracted to) would be loaded when the installer runs.
 [target.x86_64-pc-windows-gnullvm]
-rustflags = ["-C", "target-feature=+crt-static"]
+rustflags = ["-C", "target-feature=+crt-static", "-C", "link-arg=-Wl,--dependent-load-flag=0x800"]
 
 [target.aarch64-pc-windows-gnullvm]
-rustflags = ["-C", "target-feature=+crt-static"]
+rustflags = ["-C", "target-feature=+crt-static", "-C", "link-arg=-Wl,--dependent-load-flag=0x800"]
 
 # MSVC builds: static CRT so no Visual C++ Redistributable is required.
 [target.x86_64-pc-windows-msvc]
-rustflags = ["-C", "target-feature=+crt-static"]
+rustflags = ["-C", "target-feature=+crt-static", "-C", "link-arg=/DEPENDENTLOADFLAG:0x800"]
 
 [target.aarch64-pc-windows-msvc]
-rustflags = ["-C", "target-feature=+crt-static"]
+rustflags = ["-C", "target-feature=+crt-static", "-C", "link-arg=/DEPENDENTLOADFLAG:0x800"]

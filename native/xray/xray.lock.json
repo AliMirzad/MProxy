@@ -3,9 +3,25 @@
   "source": "https://github.com/XTLS/Xray-core/releases/download",
   "license": "MPL-2.0",
   "assets": {
-    "windows-x64": { "file": "Xray-windows-64.zip", "sha256": "d004c39288ce9ada487c6f398c7c545f7d749e44bdfdd59dbc9f865afba4e1ad" },
-    "windows-arm64": { "file": "Xray-windows-arm64-v8a.zip", "sha256": "35d4ed6ec21224fb22b07c2c3f672e2350cd536f2c74d309150175a76365ea88" },
-    "macos-x64": { "file": "Xray-macos-64.zip", "sha256": "f5b0471d3459eff1b82e48af0aeac186abcc3298210070afbbbd8437a4e8b203" },
-    "macos-arm64": { "file": "Xray-macos-arm64-v8a.zip", "sha256": "2e93a67e8aa1936ecefb307e120830fcbd4c643ab9b1c46a2d0838d5f8409eaf" }
+    "windows-x64": {
+      "file": "Xray-windows-64.zip",
+      "sha256": "d004c39288ce9ada487c6f398c7c545f7d749e44bdfdd59dbc9f865afba4e1ad",
+      "binarySha256": "15c2d007954ac53ba69b80ec91242786b3c0b71d52649165b4ca1d5cc96ef8f1"
+    },
+    "windows-arm64": {
+      "file": "Xray-windows-arm64-v8a.zip",
+      "sha256": "35d4ed6ec21224fb22b07c2c3f672e2350cd536f2c74d309150175a76365ea88",
+      "binarySha256": "e3340409afd87c1cd928e19208c78cb7271e9f95777aa5122db30759b6d2dc81"
+    },
+    "macos-x64": {
+      "file": "Xray-macos-64.zip",
+      "sha256": "f5b0471d3459eff1b82e48af0aeac186abcc3298210070afbbbd8437a4e8b203",
+      "binarySha256": "afd0eaebb77994a18f29b00c5f50a4f7fbb77da06e24352d43035f3cad3c3786"
+    },
+    "macos-arm64": {
+      "file": "Xray-macos-arm64-v8a.zip",
+      "sha256": "2e93a67e8aa1936ecefb307e120830fcbd4c643ab9b1c46a2d0838d5f8409eaf",
+      "binarySha256": "5d9dd24c0aba4b6cfcc6a33a5d67f854816ee17f392bf932ec8176da46f7e404"
+    }
   }
 }

@@ -17,7 +17,7 @@ pub struct Target {
 
 /// Default probe targets: well-known "connectivity check" endpoints that return 204.
 pub fn default_targets() -> Vec<Target> {
-    if let Ok(v) = std::env::var("PRIVATE_PROXY_PROBE_URL") {
+    if let Some(v) = crate::test_hook("PRIVATE_PROXY_PROBE_URL").and_then(|v| v.into_string().ok()) {
         // Test hook: "host:port/path".
         if let Some((hp, path)) = v.split_once('/') {
             if let Some((h, p)) = hp.rsplit_once(':') {

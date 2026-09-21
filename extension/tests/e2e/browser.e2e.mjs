@@ -22,6 +22,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import net from 'node:net';
+import { hostCandidates } from '../../../scripts/target-dir.mjs';
 import { startTestServer, freePort, MARKER } from '../../../scripts/lib/test-server.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '../../..');
@@ -38,13 +39,11 @@ const xray = join(xrayDir, win ? 'xray.exe' : 'xray');
 const extId = readFileSync(join(root, 'shared/extension-id.txt'), 'utf8').trim();
 const extDist = join(root, 'extension/dist');
 
+// The E2E test needs the debug helper: its data-dir / probe-target overrides are test hooks
+// that release builds ignore (see ppcore::test_hook).
 function findHost() {
-  for (const p of ['release', 'debug']) {
-    for (const t of ['', 'x86_64-pc-windows-gnullvm/']) {
-      const f = join(root, 'native/target', t, p, win ? 'private-proxy-host.exe' : 'private-proxy-host');
-      if (existsSync(f)) return f;
-    }
-  }
+  const f = hostCandidates('debug').find(existsSync);
+  if (f) return f;
   throw new Error('Build the native helper first: node scripts/cargo.mjs build');
 }
 
@@ -111,7 +110,7 @@ const dataDir = join(tmp, 'data');
 const profileDir = join(tmp, 'profile');
 const host = findHost();
 const browserPath = findBrowser();
-const env = { ...process.env, PRIVATE_PROXY_DATA_DIR: dataDir };
+const env = { ...process.env, PRIVATE_PROXY_TEST_MODE: '1', PRIVATE_PROXY_DATA_DIR: dataDir };
 let server;
 let context;
 

@@ -223,6 +223,7 @@ impl Host {
         .unwrap();
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_private-proxy-host"));
         cmd.arg(origin())
+            .env("PRIVATE_PROXY_TEST_MODE", "1")
             .env("PRIVATE_PROXY_DATA_DIR", data.path())
             .env("PRIVATE_PROXY_INSECURE_FILE_KEY", "1")
             .env("PRIVATE_PROXY_PROBE_URL", format!("probe.test:{}/generate_204", o.probe_port))

@@ -1,5 +1,5 @@
 //! Per-user filesystem locations. Nothing here is caller controlled; the only override is
-//! the `PRIVATE_PROXY_DATA_DIR` environment variable used by tests and development.
+//! the `PRIVATE_PROXY_DATA_DIR` test hook (ignored by release builds, see [`crate::test_hook`]).
 
 use std::path::PathBuf;
 
@@ -13,7 +13,7 @@ fn home() -> PathBuf {
 
 /// `%LOCALAPPDATA%\PrivateProxy` / `~/Library/Application Support/PrivateProxy`.
 pub fn data_dir() -> PathBuf {
-    if let Some(d) = std::env::var_os("PRIVATE_PROXY_DATA_DIR") {
+    if let Some(d) = crate::test_hook("PRIVATE_PROXY_DATA_DIR") {
         return PathBuf::from(d);
     }
     if cfg!(windows) {
@@ -27,7 +27,7 @@ pub fn data_dir() -> PathBuf {
 
 /// `%LOCALAPPDATA%\PrivateProxy\logs` / `~/Library/Logs/PrivateProxy`.
 pub fn log_dir() -> PathBuf {
-    if std::env::var_os("PRIVATE_PROXY_DATA_DIR").is_some() || !cfg!(target_os = "macos") {
+    if crate::test_hook("PRIVATE_PROXY_DATA_DIR").is_some() || !cfg!(target_os = "macos") {
         data_dir().join("logs")
     } else {
         home().join("Library/Logs").join(APP_DIR)
@@ -49,24 +49,13 @@ pub fn home_dir() -> PathBuf {
     home()
 }
 
-/// Restrict a directory to the current user (0700) on Unix. Windows per-user profile
-/// directories already carry a user-only ACL.
+/// Restrict a directory to the current user (see [`crate::harden::restrict_dir`]).
 pub fn harden_dir(p: &std::path::Path) {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o700));
+    if let Err(e) = crate::harden::restrict_dir(p) {
+        crate::log::warn(format!("could not restrict permissions of {}: {e}", p.display()));
     }
-    #[cfg(not(unix))]
-    let _ = p;
 }
 
 pub fn harden_file(p: &std::path::Path) {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o600));
-    }
-    #[cfg(not(unix))]
-    let _ = p;
+    crate::harden::restrict_file(p);
 }

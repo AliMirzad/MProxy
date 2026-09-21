@@ -13,6 +13,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, readdirSync, chmodSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { hostCandidates } from './target-dir.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
@@ -52,10 +53,7 @@ node('scripts/fetch-xray.mjs', [platform]);
 const cargoArgs = ['build', '--release', ...(rustTarget ? ['--target', rustTarget] : [])];
 node('scripts/cargo.mjs', cargoArgs);
 const exe = win ? 'private-proxy-host.exe' : 'private-proxy-host';
-const candidates = [
-  join(root, 'native/target', rustTarget ?? '', 'release', exe),
-  join(root, 'native/target/x86_64-pc-windows-gnullvm/release', exe),
-];
+const candidates = hostCandidates('release', rustTarget);
 const hostBin = candidates.find(existsSync);
 if (!hostBin) throw new Error('release binary not found');
 

@@ -8,6 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { hostCandidates } from './target-dir.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const [cmd, ...rest] = process.argv.slice(2);
@@ -15,7 +16,7 @@ const win = process.platform === 'win32';
 const plat = `${win ? 'windows' : 'macos'}-${process.arch === 'arm64' ? 'arm64' : 'x64'}`;
 const profile = rest.includes('--release') ? 'release' : 'debug';
 const exe = win ? 'private-proxy-host.exe' : 'private-proxy-host';
-const host = [join(root, 'native/target', profile, exe), join(root, 'native/target/x86_64-pc-windows-gnullvm', profile, exe)].find(existsSync);
+const host = hostCandidates(profile).find(existsSync);
 
 if (cmd === 'install') {
   if (!host) throw new Error(`build first: node scripts/cargo.mjs build${profile === 'release' ? ' --release' : ''}`);

@@ -10,6 +10,7 @@ import { spawnSync, execSync } from 'node:child_process';
 import { existsSync, readdirSync } from 'node:fs';
 import { dirname, join, delimiter } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { targetDir } from './target-dir.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
@@ -52,5 +53,6 @@ if (process.platform === 'win32' && !env.PRIVATE_PROXY_FORCE_DEFAULT_TOOLCHAIN) 
 }
 
 // Run inside native/ so native/.cargo/config.toml (static CRT/libunwind) applies.
+env.CARGO_TARGET_DIR = targetDir();
 const r = spawnSync('cargo', [...toolchain, ...args], { stdio: 'inherit', env, shell: false, cwd: join(root, 'native') });
 process.exit(r.status ?? 1);

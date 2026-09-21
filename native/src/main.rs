@@ -13,13 +13,17 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 fn main() -> ExitCode {
+    ppcore::harden::harden_current_process();
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some(origin) if origin.starts_with("chrome-extension://") => run_host(origin),
         Some("--version") | Some("version") => {
             println!("private-proxy-host {} (protocol {})", ppcore::NATIVE_VERSION, ppcore::PROTOCOL_VERSION);
             if let Some(x) = xray::locate() {
-                println!("xray {} ({})", xray::version(&x).unwrap_or_else(|| "?".into()), x.display());
+                match xray::verify(&x) {
+                    Ok(_) => println!("xray {} ({}, sha256 {} verified)", xray::PINNED_VERSION, x.display(), xray::PINNED_SHA256),
+                    Err(e) => println!("xray: {} ({e})", x.display()),
+                }
             } else {
                 println!("xray: not found");
             }

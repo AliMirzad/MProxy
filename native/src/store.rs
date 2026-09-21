@@ -106,8 +106,11 @@ pub fn now() -> u64 {
 
 fn atomic_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let tmp = path.with_extension("tmp");
+    // Never write through a pre-existing temp file: it could be a link planted to redirect the
+    // write. Remove it (removes the link itself, not its target) and create a fresh file.
+    let _ = fs::remove_file(&tmp);
     {
-        let mut f = File::create(&tmp)?;
+        let mut f = OpenOptions::new().write(true).create_new(true).open(&tmp)?;
         f.write_all(bytes)?;
         f.sync_all()?;
     }
@@ -117,6 +120,9 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 
 impl Store {
     pub fn open(dir: PathBuf, keys: Box<dyn KeyProvider>) -> Result<Store, StoreError> {
+        if crate::harden::is_link(&dir) {
+            return Err(StoreError::Io(format!("{} is a link or junction; refusing to store credentials there", dir.display())));
+        }
         fs::create_dir_all(&dir)?;
         crate::paths::harden_dir(&dir);
         Ok(Store { dir, keys })

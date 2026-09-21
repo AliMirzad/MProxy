@@ -4,6 +4,7 @@
 //! config generation, storage and the connection state machine can be unit- and
 //! integration-tested without a browser.
 
+pub mod harden;
 pub mod install;
 pub mod log;
 pub mod model;
@@ -20,6 +21,26 @@ pub mod subscription;
 pub mod validate;
 pub mod xray;
 pub mod xrayconf;
+#[cfg(windows)]
+pub mod winproc;
+
+/// Development/test overrides (`PRIVATE_PROXY_*` environment variables).
+///
+/// Release builds ignore every override, so nothing in the environment of the browser that
+/// launches the helper can redirect its data directory, key storage, Xray binary or probe
+/// target, or relax its network restrictions. Debug builds honour them only when
+/// `PRIVATE_PROXY_TEST_MODE=1` is also set.
+pub fn test_hook(name: &str) -> Option<std::ffi::OsString> {
+    if !cfg!(debug_assertions) || std::env::var_os("PRIVATE_PROXY_TEST_MODE").as_deref() != Some(std::ffi::OsStr::new("1")) {
+        return None;
+    }
+    std::env::var_os(name)
+}
+
+/// True when a boolean test hook is set to "1" (see [`test_hook`]).
+pub fn test_flag(name: &str) -> bool {
+    test_hook(name).as_deref() == Some(std::ffi::OsStr::new("1"))
+}
 
 /// Version of the extension <-> helper message protocol.
 /// Bump on any incompatible change to `protocol.rs`.

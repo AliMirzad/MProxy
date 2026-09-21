@@ -1,21 +1,32 @@
 //! Xray-core process management.
 //!
-//! * Location: `PRIVATE_PROXY_XRAY` (development), else `<helper dir>/xray/xray[.exe]`,
-//!   else `<helper dir>/xray[.exe]`. Never a caller-supplied path.
+//! * Location: `<helper dir>/xray/xray[.exe]` (installed layout), else `<helper dir>/xray[.exe]`.
+//!   Never a caller-supplied path and never a PATH search. Debug builds in test mode may
+//!   override it with `PRIVATE_PROXY_XRAY`; the binary must still match the pinned hash.
+//! * Integrity: before every launch the binary's SHA-256 must equal the value pinned in
+//!   `native/xray/xray.lock.json` (compiled in by `build.rs`). The file stays open while it is
+//!   launched; on Windows the handle denies writers and deleters, so it cannot be swapped between
+//!   the check and the launch.
 //! * Arguments are fixed: `run -c stdin: -format json` (and `-test` for validation).
 //!   The config, which contains credentials, is written to the child's stdin: no temp file, and
 //!   nothing sensitive in the process arguments.
-//! * Windows: the child joins a Job Object with KILL_ON_JOB_CLOSE, so it cannot outlive the
-//!   helper, and it is created with CREATE_NO_WINDOW.
+//! * Environment: cleared; only `SystemRoot` is passed on Windows.
+//! * Windows: see `winproc.rs` (Low integrity, mitigation policies, no child processes,
+//!   restricted kill-on-close job, explicit handle list).
 //! * Unix: a PID file per helper instance lets the next helper reap an Xray orphaned by a
 //!   `SIGKILL`ed helper; SIGTERM/SIGHUP/SIGINT kill the child before exiting.
 
 use crate::log::{self, Tail};
-use std::io::{BufRead, BufReader, Write};
+use sha2::{Digest, Sha256};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+
+/// SHA-256 of the pinned Xray binary for this platform (empty if the platform has none).
+pub const PINNED_SHA256: &str = env!("PP_XRAY_SHA256");
+/// Pinned Xray-core release, e.g. "v26.3.27".
+pub const PINNED_VERSION: &str = env!("PP_XRAY_VERSION");
 
 pub fn exe_name() -> &'static str {
     if cfg!(windows) {
@@ -26,7 +37,7 @@ pub fn exe_name() -> &'static str {
 }
 
 pub fn locate() -> Option<PathBuf> {
-    if let Some(p) = std::env::var_os("PRIVATE_PROXY_XRAY") {
+    if let Some(p) = crate::test_hook("PRIVATE_PROXY_XRAY") {
         let p = PathBuf::from(p);
         return p.is_file().then_some(p);
     }
@@ -35,49 +46,107 @@ pub fn locate() -> Option<PathBuf> {
     [dir.join("xray").join(exe_name()), dir.join(exe_name())].into_iter().find(|p| p.is_file())
 }
 
-fn command(xray: &Path) -> Command {
-    let mut c = Command::new(xray);
+/// Opens `xray` so that it cannot be modified while the handle is open (Windows) and checks its
+/// SHA-256 against the pinned value. Keep the returned handle alive until the process is started.
+pub fn verify(xray: &Path) -> Result<std::fs::File, String> {
+    if PINNED_SHA256.is_empty() {
+        return Err("no pinned Xray build for this platform".into());
+    }
+    let mut opts = std::fs::OpenOptions::new();
+    opts.read(true);
     #[cfg(windows)]
     {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        c.creation_flags(CREATE_NO_WINDOW);
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_SHARE_READ: u32 = 1;
+        opts.share_mode(FILE_SHARE_READ); // no FILE_SHARE_WRITE / FILE_SHARE_DELETE
     }
-    // Xray must not pick up asset/config locations from the environment.
-    c.env_remove("XRAY_LOCATION_CONFIG").env_remove("XRAY_LOCATION_CONFDIR").env_remove("XRAY_LOCATION_ASSET");
-    if let Some(dir) = xray.parent() {
-        c.current_dir(dir);
+    let mut f = opts.open(xray).map_err(|e| format!("cannot open Xray: {e}"))?;
+    let mut h = Sha256::new();
+    let mut buf = vec![0u8; 1 << 20];
+    loop {
+        let n = f.read(&mut buf).map_err(|e| format!("cannot read Xray: {e}"))?;
+        if n == 0 {
+            break;
+        }
+        h.update(&buf[..n]);
     }
-    c
+    let got: String = h.finalize().iter().map(|b| format!("{b:02x}")).collect();
+    if got != PINNED_SHA256 {
+        log::error(format!("Xray integrity check failed for {} (sha256 {got})", xray.display()));
+        return Err("the Xray binary does not match the pinned release (modified or corrupted). Reinstall the runtime.".into());
+    }
+    Ok(f)
 }
 
-/// `xray version` -> "26.3.27".
-pub fn version(xray: &Path) -> Option<String> {
-    let out = command(xray).arg("version").stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
-    let s = String::from_utf8_lossy(&out.stdout);
-    let first = s.lines().next()?;
-    let v = first.split_whitespace().nth(1)?;
-    Some(v.to_string())
+/// A started Xray process, independent of platform.
+struct Proc {
+    #[cfg(windows)]
+    inner: crate::winproc::ChildProc,
+    #[cfg(not(windows))]
+    inner: std::process::Child,
+}
+
+impl Proc {
+    fn spawn(xray: &Path, args: &[&str], stdin: bool) -> Result<Proc, String> {
+        let guard = verify(xray)?;
+        let dir = xray.parent().unwrap_or(Path::new("."));
+        #[cfg(windows)]
+        let r = crate::winproc::ChildProc::spawn(xray, args, dir, crate::winproc::Stdio { stdin, stdout: true, stderr: true })
+            .map(|inner| Proc { inner });
+        #[cfg(not(windows))]
+        let r = {
+            use std::process::{Command, Stdio};
+            Command::new(xray)
+                .args(args)
+                .env_clear()
+                .current_dir(dir)
+                .stdin(if stdin { Stdio::piped() } else { Stdio::null() })
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .map(|inner| Proc { inner })
+        };
+        drop(guard);
+        r.map_err(|e| format!("could not start Xray: {e}"))
+    }
+    fn id(&self) -> u32 {
+        self.inner.id()
+    }
+    fn take_stdin(&mut self) -> Option<Box<dyn Write + Send>> {
+        self.inner.stdin.take().map(|s| Box::new(s) as Box<dyn Write + Send>)
+    }
+    fn take_stdout(&mut self) -> Option<Box<dyn Read + Send>> {
+        self.inner.stdout.take().map(|s| Box::new(s) as Box<dyn Read + Send>)
+    }
+    fn take_stderr(&mut self) -> Option<Box<dyn Read + Send>> {
+        self.inner.stderr.take().map(|s| Box::new(s) as Box<dyn Read + Send>)
+    }
+    /// `Some(description)` once exited.
+    fn try_exit(&mut self) -> Result<Option<(bool, String)>, String> {
+        #[cfg(windows)]
+        return self.inner.try_wait().map(|o| o.map(|c| (c == 0, format!("exit code {c}")))).map_err(|e| e.to_string());
+        #[cfg(not(windows))]
+        return self.inner.try_wait().map(|o| o.map(|s| (s.success(), format!("{s}")))).map_err(|e| e.to_string());
+    }
+    fn kill(&mut self) {
+        let _ = self.inner.kill();
+    }
+    fn wait(&mut self) {
+        let _ = self.inner.wait();
+    }
 }
 
 /// Validates a config with `xray run -test`. Returns the (redacted) failure reason.
 pub fn test_config(xray: &Path, config: &[u8]) -> Result<(), String> {
-    let mut child = command(xray)
-        .args(["run", "-test", "-c", "stdin:", "-format", "json"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("could not start Xray: {e}"))?;
+    let mut child = Proc::spawn(xray, &["run", "-test", "-c", "stdin:", "-format", "json"], true)?;
     {
-        let mut stdin = child.stdin.take().ok_or("no stdin")?;
+        let mut stdin = child.take_stdin().ok_or("no stdin")?;
         stdin.write_all(config).map_err(|e| format!("could not pass config to Xray: {e}"))?;
     }
-    let out = wait_with_timeout(child, Duration::from_secs(15))?;
-    if out.status.success() {
+    let (ok, text) = wait_with_timeout(child, Duration::from_secs(15))?;
+    if ok {
         return Ok(());
     }
-    let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
     let reason = text
         .lines()
         .rev()
@@ -88,40 +157,38 @@ pub fn test_config(xray: &Path, config: &[u8]) -> Result<(), String> {
     Err(log::redact(short.trim()))
 }
 
-fn wait_with_timeout(mut child: Child, timeout: Duration) -> Result<std::process::Output, String> {
-    fn drain(r: Option<impl std::io::Read + Send + 'static>) -> std::thread::JoinHandle<Vec<u8>> {
+fn wait_with_timeout(mut child: Proc, timeout: Duration) -> Result<(bool, String), String> {
+    fn drain(r: Option<Box<dyn Read + Send>>) -> std::thread::JoinHandle<Vec<u8>> {
         std::thread::spawn(move || {
             let mut v = Vec::new();
             if let Some(mut r) = r {
-                let _ = std::io::Read::read_to_end(&mut r, &mut v);
+                let _ = r.read_to_end(&mut v);
             }
             v
         })
     }
-    let out = drain(child.stdout.take());
-    let err = drain(child.stderr.take());
+    let out = drain(child.take_stdout());
+    let err = drain(child.take_stderr());
     let deadline = std::time::Instant::now() + timeout;
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(st)) => break st,
-            Ok(None) if std::time::Instant::now() < deadline => std::thread::sleep(Duration::from_millis(20)),
-            Ok(None) => {
-                let _ = child.kill();
-                let _ = child.wait();
+    let ok = loop {
+        match child.try_exit()? {
+            Some((ok, _)) => break ok,
+            None if std::time::Instant::now() < deadline => std::thread::sleep(Duration::from_millis(20)),
+            None => {
+                child.kill();
+                child.wait();
                 return Err("Xray did not finish validating the configuration in time".into());
             }
-            Err(e) => return Err(e.to_string()),
         }
     };
-    Ok(std::process::Output { status, stdout: out.join().unwrap_or_default(), stderr: err.join().unwrap_or_default() })
+    let text = format!("{}{}", String::from_utf8_lossy(&out.join().unwrap_or_default()), String::from_utf8_lossy(&err.join().unwrap_or_default()));
+    Ok((ok, text))
 }
 
 pub struct Running {
-    child: Arc<Mutex<Child>>,
+    child: Arc<Mutex<Proc>>,
     pub pid: u32,
     pub tail: Arc<Mutex<Tail>>,
-    #[cfg(windows)]
-    _job: job::Job,
     #[cfg(unix)]
     pidfile: Option<PathBuf>,
 }
@@ -130,8 +197,8 @@ impl Running {
     /// Non-blocking: `Some(exit description)` once the process has exited.
     pub fn try_exit(&self) -> Option<String> {
         let mut c = self.child.lock().unwrap_or_else(|e| e.into_inner());
-        match c.try_wait() {
-            Ok(Some(st)) => Some(format!("{st}")),
+        match c.try_exit() {
+            Ok(Some((_, how))) => Some(how),
             Ok(None) => None,
             Err(e) => Some(format!("wait failed: {e}")),
         }
@@ -140,8 +207,8 @@ impl Running {
     pub fn stop(self) {
         {
             let mut c = self.child.lock().unwrap_or_else(|e| e.into_inner());
-            let _ = c.kill();
-            let _ = c.wait();
+            c.kill();
+            c.wait();
         }
         #[cfg(unix)]
         {
@@ -151,53 +218,46 @@ impl Running {
             }
         }
     }
+
+    /// OS-reported isolation of the running process (Windows), for diagnostics and tests.
+    pub fn isolation(&self) -> Option<serde_json::Value> {
+        #[cfg(windows)]
+        return crate::winproc::isolation_of(self.pid).and_then(|i| serde_json::to_value(i).ok());
+        #[cfg(not(windows))]
+        None
+    }
 }
 
 /// Starts `xray run` with `config` on stdin and captures its output into a bounded tail
 /// (and into the debug log when enabled).
 pub fn spawn(xray: &Path, config: &[u8], run_dir: &Path) -> Result<Running, String> {
-    let mut child = command(xray)
-        .args(["run", "-c", "stdin:", "-format", "json"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| format!("could not start Xray: {e}"))?;
+    let mut child = Proc::spawn(xray, &["run", "-c", "stdin:", "-format", "json"], true)?;
     let pid = child.id();
-
-    #[cfg(windows)]
-    let job = match job::Job::new_kill_on_close() {
-        Ok(j) => {
-            if let Err(e) = j.assign(&child) {
-                log::warn(format!("could not assign Xray to job object: {e}"));
-            }
-            j
-        }
-        Err(e) => {
-            let _ = child.kill();
-            return Err(format!("could not create job object: {e}"));
-        }
-    };
     let _ = &run_dir; // only used on Unix (PID file)
 
     #[cfg(unix)]
     let pidfile = {
         unix::set_child(pid as i32);
         let p = run_dir.join(format!("xray-{}.pid", std::process::id()));
-        let _ = std::fs::write(&p, format!("{pid}\n{}\n", xray.display()));
+        let _ = std::fs::remove_file(&p);
+        let _ = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&p)
+            .and_then(|mut f| f.write_all(format!("{pid}\n{}\n", xray.display()).as_bytes()));
         Some(p)
     };
 
-    if let Some(mut stdin) = child.stdin.take() {
+    if let Some(mut stdin) = child.take_stdin() {
         if let Err(e) = stdin.write_all(config) {
-            let _ = child.kill();
+            child.kill();
             return Err(format!("could not pass config to Xray: {e}"));
         }
         // dropping stdin closes it; Xray reads the config until EOF
     }
 
     let tail = Arc::new(Mutex::new(Tail::new(60)));
-    for stream in [child.stdout.take().map(|s| Box::new(s) as Box<dyn std::io::Read + Send>), child.stderr.take().map(|s| Box::new(s) as Box<dyn std::io::Read + Send>)].into_iter().flatten() {
+    for stream in [child.take_stdout(), child.take_stderr()].into_iter().flatten() {
         let tail = tail.clone();
         std::thread::spawn(move || {
             for line in BufReader::new(stream).lines().map_while(Result::ok) {
@@ -213,8 +273,6 @@ pub fn spawn(xray: &Path, config: &[u8], run_dir: &Path) -> Result<Running, Stri
         child: Arc::new(Mutex::new(child)),
         pid,
         tail,
-        #[cfg(windows)]
-        _job: job,
         #[cfg(unix)]
         pidfile,
     })
@@ -232,56 +290,6 @@ pub fn reap_orphans(run_dir: &Path, xray: &Path) {
 pub fn install_signal_handlers() {
     #[cfg(unix)]
     unix::install();
-}
-
-#[cfg(windows)]
-mod job {
-    use std::os::windows::io::AsRawHandle;
-    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
-    use windows_sys::Win32::System::JobObjects::*;
-
-    pub struct Job(HANDLE);
-    unsafe impl Send for Job {}
-
-    impl Job {
-        pub fn new_kill_on_close() -> std::io::Result<Job> {
-            unsafe {
-                let h = CreateJobObjectW(std::ptr::null(), std::ptr::null());
-                if h.is_null() {
-                    return Err(std::io::Error::last_os_error());
-                }
-                let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
-                info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-                let ok = SetInformationJobObject(
-                    h,
-                    JobObjectExtendedLimitInformation,
-                    &info as *const _ as *const _,
-                    std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-                );
-                if ok == 0 {
-                    let e = std::io::Error::last_os_error();
-                    CloseHandle(h);
-                    return Err(e);
-                }
-                Ok(Job(h))
-            }
-        }
-        pub fn assign(&self, child: &std::process::Child) -> std::io::Result<()> {
-            unsafe {
-                if AssignProcessToJobObject(self.0, child.as_raw_handle() as HANDLE) == 0 {
-                    return Err(std::io::Error::last_os_error());
-                }
-            }
-            Ok(())
-        }
-    }
-    impl Drop for Job {
-        fn drop(&mut self) {
-            unsafe {
-                CloseHandle(self.0);
-            }
-        }
-    }
 }
 
 #[cfg(unix)]
@@ -341,11 +349,16 @@ mod unix {
         for e in rd.flatten() {
             let name = e.file_name().to_string_lossy().into_owned();
             let Some(helper) = name.strip_prefix("xray-").and_then(|s| s.strip_suffix(".pid")).and_then(|s| s.parse::<i32>().ok()) else { continue };
+            if crate::harden::is_link(&e.path()) {
+                let _ = std::fs::remove_file(e.path());
+                continue;
+            }
             if alive(helper) {
                 continue; // another helper (another browser) still owns it
             }
             if let Ok(txt) = std::fs::read_to_string(e.path()) {
                 if let Some(pid) = txt.lines().next().and_then(|l| l.trim().parse::<i32>().ok()) {
+                    // Only ever kill a process that is running *our* Xray binary.
                     let same = exe_of(pid).map(|p| std::fs::canonicalize(&p).unwrap_or(p) == want).unwrap_or(false);
                     if pid > 0 && alive(pid) && same {
                         crate::log::warn(format!("killing orphaned Xray pid {pid}"));
@@ -357,5 +370,29 @@ mod unix {
             }
             let _ = std::fs::remove_file(e.path());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pinned_hash_is_compiled_in() {
+        if cfg!(any(windows, target_os = "macos")) {
+            assert_eq!(PINNED_SHA256.len(), 64);
+            assert!(PINNED_VERSION.starts_with('v'));
+        }
+    }
+
+    #[test]
+    fn modified_binary_is_refused() {
+        let t = tempfile::tempdir().unwrap();
+        let p = t.path().join(exe_name());
+        std::fs::write(&p, b"MZ not the pinned xray").unwrap();
+        let e = verify(&p).unwrap_err();
+        assert!(e.contains("does not match") || e.contains("no pinned"), "{e}");
+        assert!(test_config(&p, b"{}").is_err());
+        assert!(spawn(&p, b"{}", t.path()).is_err());
     }
 }

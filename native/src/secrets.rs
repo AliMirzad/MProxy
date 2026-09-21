@@ -102,7 +102,7 @@ impl KeyProvider for FileKeyProvider {
 }
 
 pub fn default_provider(data_dir: &std::path::Path) -> Box<dyn KeyProvider> {
-    if std::env::var("PRIVATE_PROXY_INSECURE_FILE_KEY").as_deref() == Ok("1") {
+    if crate::test_flag("PRIVATE_PROXY_INSECURE_FILE_KEY") {
         Box::new(FileKeyProvider { path: data_dir.join("dev-insecure.key") })
     } else {
         Box::new(KeyringProvider)
