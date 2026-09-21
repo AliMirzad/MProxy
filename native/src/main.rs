@@ -1,4 +1,4 @@
-//! Private Proxy native messaging host.
+//! MProxy native messaging host.
 //!
 //! Launched by Chromium as `private-proxy-host chrome-extension://<id>/ [--parent-window=N]`.
 //! Also offers `install`, `uninstall` and `--version` for the installers. These are only
@@ -39,7 +39,7 @@ fn main() -> ExitCode {
         }
         _ => {
             eprintln!(
-                "Private Proxy native runtime {}.\n\nThis program is started automatically by the Private Proxy browser extension;\nthere is nothing to open. Commands: install, uninstall [--purge], status, --version",
+                "MProxy native runtime {}.\n\nThis program is started automatically by the MProxy browser extension;\nthere is nothing to open. Commands: install, uninstall [--purge], status, --version",
                 ppcore::NATIVE_VERSION
             );
             if cfg!(windows) && io::stdin().is_terminal() && args.is_empty() {
