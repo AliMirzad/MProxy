@@ -1122,3 +1122,20 @@ fn malicious_subscription_bodies() {
     let r = h.ok("updateSubscription", json!({"id": sub_id}));
     assert_eq!(h.ok("listServers", json!({}))["servers"].as_array().unwrap().len(), 2000, "{r}");
 }
+
+/// DLL planting: fake copies of the helper's non-KnownDLL imports next to the executable (e.g. in
+/// the Downloads folder the package was extracted to) must not be loaded. Covered by
+/// DependentLoadFlags=LOAD_LIBRARY_SEARCH_SYSTEM32 (.cargo/config.toml).
+#[cfg(windows)]
+#[test]
+fn planted_dlls_are_not_loaded() {
+    let t = tempfile::tempdir().unwrap();
+    let exe = t.path().join("private-proxy-host.exe");
+    std::fs::copy(env!("CARGO_BIN_EXE_private-proxy-host"), &exe).unwrap();
+    for dll in ["secur32", "bcrypt", "crypt32", "bcryptprimitives", "version", "userenv", "winhttp", "dbghelp"] {
+        std::fs::write(t.path().join(format!("{dll}.dll")), b"MZ planted - not a real DLL").unwrap();
+    }
+    let out = Command::new(&exe).arg("--version").output().unwrap();
+    assert!(out.status.success(), "helper failed next to planted DLLs: {:?}", out.status);
+    assert!(String::from_utf8_lossy(&out.stdout).contains("private-proxy-host"));
+}

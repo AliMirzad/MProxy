@@ -38,7 +38,7 @@ const node = (script, a = [], cwd = root) => run(process.execPath, [join(root, s
 
 // 1. Tests (unless skipped)
 if (!args.includes('--skip-tests')) {
-  node('scripts/cargo.mjs', ['test', '--release']);
+  node('scripts/cargo.mjs', ['test', '--locked']); // debug: integration tests use test hooks
   run(win ? 'npx.cmd' : 'npx', ['vitest', 'run'], { cwd: join(root, 'extension'), shell: win });
 }
 
@@ -50,7 +50,7 @@ zip(join(root, 'extension/dist'), extZip);
 
 // 3. Xray + native helper
 node('scripts/fetch-xray.mjs', [platform]);
-const cargoArgs = ['build', '--release', ...(rustTarget ? ['--target', rustTarget] : [])];
+const cargoArgs = ['build', '--release', '--locked', ...(rustTarget ? ['--target', rustTarget] : [])];
 node('scripts/cargo.mjs', cargoArgs);
 const exe = win ? 'private-proxy-host.exe' : 'private-proxy-host';
 const candidates = hostCandidates('release', rustTarget);

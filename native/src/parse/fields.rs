@@ -7,7 +7,7 @@
 //! * `Silent`    – known, has no effect on a client connection (e.g. `level`, `email`); dropped
 //! * `Ignored`   – known but not supported; dropped with a warning shown to the user
 //! * `Dangerous` – could make Xray touch files, bind local interfaces, chain proxies, resolve
-//!                 names locally, or is server-side key material: the entry is **rejected**
+//!   names locally, or is server-side key material: the entry is **rejected**
 //! * anything else – unknown: the entry is **rejected**
 //!
 //! Dropping is safe because nothing is forwarded: the Xray config is regenerated from the typed

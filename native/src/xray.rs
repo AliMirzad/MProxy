@@ -129,6 +129,9 @@ impl Proc {
         return self.inner.try_wait().map(|o| o.map(|s| (s.success(), format!("{s}")))).map_err(|e| e.to_string());
     }
     fn kill(&mut self) {
+        #[cfg(windows)]
+        self.inner.kill();
+        #[cfg(not(windows))]
         let _ = self.inner.kill();
     }
     fn wait(&mut self) {

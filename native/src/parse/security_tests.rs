@@ -2,7 +2,6 @@
 //! forwarded to Xray, and never crash the parser. Referenced from docs/security-gate.md.
 
 use super::*;
-use crate::model::*;
 use base64::Engine;
 
 const UUID: &str = "b831381d-6324-4d53-ad4f-8cda48b30811";

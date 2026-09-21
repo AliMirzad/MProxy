@@ -267,10 +267,10 @@ impl ChildProc {
             {
                 return Err(last());
             }
-            if r.no_child_processes {
-                if UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_CHILD_PROCESS_POLICY_, &child_policy as *const u32 as *const _, 4, std::ptr::null_mut(), std::ptr::null()) == 0 {
-                    return Err(last());
-                }
+            if r.no_child_processes
+                && UpdateProcThreadAttribute(attrs, 0, PROC_THREAD_ATTRIBUTE_CHILD_PROCESS_POLICY_, &child_policy as *const u32 as *const _, 4, std::ptr::null_mut(), std::ptr::null()) == 0
+            {
+                return Err(last());
             }
 
             let mut si: STARTUPINFOEXW = std::mem::zeroed();

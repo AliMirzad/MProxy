@@ -41,10 +41,16 @@ jobs:
           npx tsc --noEmit
           npx vitest run
       - name: Native tests (unit + integration against real Xray)
-        env:
-          # CI has no interactive login keychain; integration tests use the file key provider.
-          PRIVATE_PROXY_INSECURE_FILE_KEY: "1"
-        run: node scripts/cargo.mjs test --release
+        # Debug build on purpose: the harness relies on test hooks (data dir, file key, loopback
+        # test servers) that release builds ignore. --locked: fail if Cargo.lock would change.
+        run: node scripts/cargo.mjs test --locked
+      - name: Lint (clippy, warnings are errors)
+        run: node scripts/cargo.mjs clippy --locked --all-targets -- -D warnings -A linker-messages
+      - name: Dependency audits
+        run: |
+          cargo install cargo-audit --locked
+          cd native && cargo audit
+          cd ../extension && npm audit --omit=dev
       - name: Package
         run: node scripts/package.mjs --skip-tests --target ${{ matrix.target }} ${{ startsWith(matrix.os, 'macos') && '--pkg' || '' }}
       - uses: actions/upload-artifact@v4
