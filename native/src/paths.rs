@@ -16,6 +16,11 @@ pub fn data_dir() -> PathBuf {
     if let Some(d) = crate::test_hook("PRIVATE_PROXY_DATA_DIR") {
         return PathBuf::from(d);
     }
+    default_data_dir()
+}
+
+/// The product's own data directory, regardless of test overrides.
+pub fn default_data_dir() -> PathBuf {
     if cfg!(windows) {
         std::env::var_os("LOCALAPPDATA").map(PathBuf::from).unwrap_or_else(|| home().join("AppData").join("Local")).join(APP_DIR)
     } else if cfg!(target_os = "macos") {

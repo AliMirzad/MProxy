@@ -117,7 +117,7 @@ fn store_err(e: StoreError) -> ApiError {
     match e {
         StoreError::Secret(SecretError::KeyMissing) | StoreError::Secret(SecretError::Corrupt) => ApiError::new(
             ErrorCode::SecureStorageUnavailable,
-            "Saved credentials can't be decrypted. Use Settings → Remove all servers, then import them again.",
+            "The key that protects your saved servers is missing or was replaced (it lives in the system credential store), so they can't be read. Open Settings → Remove all servers, then add your subscription or links again.",
         ),
         StoreError::Secret(SecretError::Unavailable(m)) => ApiError::new(
             ErrorCode::SecureStorageUnavailable,

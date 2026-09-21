@@ -115,6 +115,12 @@ const dataDir = join(tmp, 'data');
 const profileDir = join(tmp, 'profile');
 const host = findHost();
 const browserPath = findBrowser();
+// The user's real data key ("secrets-data-key" in Credential Manager) must survive this test,
+// including its final "uninstall --purge": the test's data dir has its own credential entry.
+const realKeyPresent = () =>
+  process.platform !== 'win32' ||
+  /secrets-data-key.com.privateproxy.host/i.test(spawnSync(join(process.env.SystemRoot || 'C:\Windows', 'System32', 'cmdkey.exe'), ['/list'], { encoding: 'utf8' }).stdout || '');
+const realKeyBefore = realKeyPresent();
 const env = { ...process.env, PRIVATE_PROXY_TEST_MODE: '1', PRIVATE_PROXY_ALLOW_LOOPBACK: '1', PRIVATE_PROXY_DATA_DIR: dataDir };
 let server;
 let context;
@@ -280,6 +286,19 @@ try {
   {
     const optionNames = () => popup.$$eval('#server-select option', (els) => els.map((e) => e.textContent.replace(/^● /, '')));
     check('main page has no delete buttons', (await popup.$('#server-delete')) === null && (await popup.$('#sub-delete')) === null);
+    // Remove a single server in Settings → Servers.
+    await popup.click('#nav-settings');
+    await popup.waitForTimeout(300);
+    const srvNames = await popup.$$eval('#srv-list .name', (els) => els.map((e) => e.textContent));
+    check('Settings lists all servers for removal', srvNames.length === 4 && srvNames.includes('E2E Dead Server'), srvNames.join(', '));
+    const rm = popup.locator('#srv-list li', { hasText: 'E2E Dead Server' }).locator('button', { hasText: 'Remove' });
+    await rm.click();
+    check('Settings Remove server asks for confirmation', (await rm.textContent()) === 'Remove?', await rm.textContent());
+    await rm.click();
+    await waitFor(async () => /Removed server "E2E Dead Server"/.test((await popup.textContent('#settings-result')) ?? ''), 'server removed', 10000).catch(() => undefined);
+    await popup.click('#nav-back');
+    await popup.waitForTimeout(300);
+    check('removed server is gone from the main dropdown', !(await optionNames()).includes('E2E Dead Server') && (await optionNames()).length === 3, (await optionNames()).join(', '));
     // Subscription: add, filter, update, delete with its servers.
     let subBody = ['A', 'B'].map((n) => `vless://5783a3e7-e373-51cd-8642-c83782b807c5@sub${n.toLowerCase()}.example.com:443?security=tls&sni=sub.example.com#Sub%20${n}`).join('\n');
     const subSrv = http.createServer((_q, res) => res.end(Buffer.from(subBody).toString('base64'))).listen(0, '127.0.0.1');
@@ -299,10 +318,13 @@ try {
     check('filtering by subscription shows only its servers', JSON.stringify(await optionNames()) === JSON.stringify(['Sub A', 'Sub B']), (await optionNames()).join(', '));
     await popup.selectOption('#server-filter', 'manual');
     await popup.waitForTimeout(300);
-    check('"Manually added" shows only hand-imported servers', !(await optionNames()).some((n) => n.startsWith('Sub ')) && (await optionNames()).length === 4, (await optionNames()).join(', '));
+    check('"Manually added" shows only hand-imported servers', !(await optionNames()).some((n) => n.startsWith('Sub ')) && (await optionNames()).length === 3, (await optionNames()).join(', '));
     await popup.selectOption('#server-filter', subOpt[0]);
     await popup.waitForTimeout(300);
     check('Update subscription appears when a subscription is chosen', await popup.isVisible('#sub-update'));
+    await shot(popup, '06-subscription-filter');
+    const sizes = await popup.$$eval('.server-tools button:not([hidden])', (els) => els.map((e) => Math.round(e.getBoundingClientRect().height)));
+    check('Update has the same size as the other buttons', sizes.length === 3 && new Set(sizes).size === 1, sizes.join(','));
     subBody += '\nvless://5783a3e7-e373-51cd-8642-c83782b807c5@subc.example.com:443?security=tls&sni=sub.example.com#Sub%20C';
     await popup.click('#sub-update');
     await waitFor(async () => (await optionNames()).includes('Sub C'), 'subscription updated', 15000).catch(() => undefined);
@@ -352,6 +374,10 @@ try {
   {
     const d0 = await popup.evaluate(() => chrome.runtime.sendMessage({ type: 'request', cmd: 'getDiagnostics', args: {} }));
     check('installed Xray verified against the pinned SHA-256', d0.result.xrayVerified === true);
+    if (process.platform === 'win32') {
+      const creds = spawnSync(join(process.env.SystemRoot || 'C:\Windows', 'System32', 'cmdkey.exe'), ['/list'], { encoding: 'utf8' }).stdout || '';
+      check('test data key is stored under its own credential name, not the real one', /secrets-data-key-[0-9a-f]{16}.com.privateproxy.host/i.test(creds) && realKeyPresent() === realKeyBefore);
+    }
     if (process.platform === 'win32') {
       const iso = d0.result.xrayIsolation || {};
       check('installed Xray runs at Low integrity, child processes blocked', iso.integrity === 'low' && iso.childProcessesBlocked === true, JSON.stringify(iso));
@@ -484,6 +510,7 @@ try {
   server?.stop();
   const un = spawnSync(host, ['uninstall', '--purge', '--target', runtimeDir], { env, encoding: 'utf8' });
   console.log(`uninstall: ${un.status === 0 ? 'ok' : un.stderr}`);
+  check("the user's real Credential Manager key is untouched by the test (incl. purge)", realKeyPresent() === realKeyBefore, `before=${realKeyBefore} after=${realKeyPresent()}`);
   rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
   const passed = results.filter((r) => r.ok).length;
   console.log(`\n${passed}/${results.length} checks passed`);

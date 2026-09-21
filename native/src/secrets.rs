@@ -38,11 +38,50 @@ fn decode_key(s: &str) -> Result<[u8; 32], SecretError> {
 }
 
 /// OS credential store (Credential Manager / Keychain).
-pub struct KeyringProvider;
+///
+/// The entry name is tied to the data directory it protects: the product's own directory uses
+/// the fixed account `secrets-data-key`; any other directory (tests, development) gets
+/// `secrets-data-key-<hash of the directory>`. So a test run or a second data directory can never
+/// read, replace or delete the key of the user's real data (which would make every stored server
+/// undecryptable).
+pub struct KeyringProvider {
+    account: String,
+}
+
+impl KeyringProvider {
+    pub fn for_data_dir(data_dir: &std::path::Path) -> KeyringProvider {
+        KeyringProvider { account: account_for(data_dir) }
+    }
+    fn entry(&self) -> Result<keyring::Entry, SecretError> {
+        keyring::Entry::new(SERVICE, &self.account).map_err(|e| SecretError::Unavailable(e.to_string()))
+    }
+}
+
+fn normalized(p: &std::path::Path) -> String {
+    let p = std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+    let s = p.to_string_lossy().replace('\\', "/");
+    let s = s.trim_start_matches("//?/").trim_end_matches('/').to_string();
+    if cfg!(windows) {
+        s.to_lowercase()
+    } else {
+        s
+    }
+}
+
+/// Credential-store account name for the key that protects `data_dir`.
+pub fn account_for(data_dir: &std::path::Path) -> String {
+    use sha2::{Digest, Sha256};
+    let default = crate::paths::default_data_dir();
+    if normalized(data_dir) == normalized(&default) {
+        return ACCOUNT.to_string();
+    }
+    let h = Sha256::digest(normalized(data_dir).as_bytes());
+    format!("{ACCOUNT}-{}", h.iter().take(8).map(|b| format!("{b:02x}")).collect::<String>())
+}
 
 impl KeyProvider for KeyringProvider {
     fn load(&self) -> Result<Option<[u8; 32]>, SecretError> {
-        let e = keyring::Entry::new(SERVICE, ACCOUNT).map_err(|e| SecretError::Unavailable(e.to_string()))?;
+        let e = self.entry()?;
         match e.get_password() {
             Ok(s) => decode_key(&s).map(Some),
             Err(keyring::Error::NoEntry) => Ok(None),
@@ -50,12 +89,12 @@ impl KeyProvider for KeyringProvider {
         }
     }
     fn store(&self, key: &[u8; 32]) -> Result<(), SecretError> {
-        let e = keyring::Entry::new(SERVICE, ACCOUNT).map_err(|e| SecretError::Unavailable(e.to_string()))?;
+        let e = self.entry()?;
         e.set_password(&base64::engine::general_purpose::STANDARD.encode(key))
             .map_err(|e| SecretError::Unavailable(e.to_string()))
     }
     fn delete(&self) -> Result<(), SecretError> {
-        let e = keyring::Entry::new(SERVICE, ACCOUNT).map_err(|e| SecretError::Unavailable(e.to_string()))?;
+        let e = self.entry()?;
         match e.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
             Err(e) => Err(SecretError::Unavailable(e.to_string())),
@@ -105,7 +144,7 @@ pub fn default_provider(data_dir: &std::path::Path) -> Box<dyn KeyProvider> {
     if crate::test_flag("PRIVATE_PROXY_INSECURE_FILE_KEY") {
         Box::new(FileKeyProvider { path: data_dir.join("dev-insecure.key") })
     } else {
-        Box::new(KeyringProvider)
+        Box::new(KeyringProvider::for_data_dir(data_dir))
     }
 }
 
@@ -142,6 +181,20 @@ pub fn decrypt(key: &[u8; 32], blob: &[u8]) -> Result<Vec<u8>, SecretError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn each_data_dir_has_its_own_credential_entry() {
+        // The product's real data directory keeps the historical account name…
+        assert_eq!(account_for(&crate::paths::default_data_dir()), ACCOUNT);
+        // …while any other directory (tests, a second install) gets its own, so purging a test
+        // runtime can never delete or replace the key protecting the user's servers.
+        let t = tempfile::tempdir().unwrap();
+        let a = account_for(t.path());
+        let b = account_for(&t.path().join("other"));
+        assert!(a.starts_with("secrets-data-key-") && a != ACCOUNT);
+        assert_ne!(a, b);
+        assert_eq!(a, account_for(t.path()), "stable");
+    }
 
     #[test]
     fn roundtrip_and_tamper() {

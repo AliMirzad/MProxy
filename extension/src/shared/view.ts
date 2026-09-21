@@ -119,10 +119,10 @@ export interface FilterOption {
 
 export function filterOptions(list: ServerList): FilterOption[] {
   const manual = list.servers.filter((s) => !s.subscriptionId).length;
-  const opts: FilterOption[] = [
-    { value: 'all', label: `All servers (${list.servers.length})` },
-    { value: 'manual', label: `Manually added (${manual})` },
-  ];
+  const opts: FilterOption[] = [{ value: 'all', label: `All servers (${list.servers.length})` }];
+  // Offered only when there are hand-added servers; subscriptions are always listed (even with
+  // no servers) so they can be chosen and updated.
+  if (manual > 0) opts.push({ value: 'manual', label: `Manually added (${manual})` });
   for (const sub of list.subscriptions) {
     const n = list.servers.filter((s) => s.subscriptionId === sub.id).length;
     opts.push({ value: `sub:${sub.id}`, label: `Subscription: ${sub.name} (${n})` });
@@ -132,7 +132,7 @@ export function filterOptions(list: ServerList): FilterOption[] {
 
 /** Unknown filters (e.g. a deleted subscription) fall back to "all". */
 export function normalizeFilter(list: ServerList, f: ServerFilter | null | undefined): ServerFilter {
-  if (f === 'manual') return f;
+  if (f === 'manual') return list.servers.some((s) => !s.subscriptionId) ? f : 'all';
   if (f && f.startsWith('sub:') && list.subscriptions.some((s) => `sub:${s.id}` === f)) return f;
   return 'all';
 }

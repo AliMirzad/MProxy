@@ -135,3 +135,6 @@ textarea { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-
 [hidden] { display: none !important; }
 
 .cred .error { color: var(--err); margin: 0 0 4px; }
+
+#srv-list { max-height: 220px; overflow-y: auto; }
+.list.compact li { padding: 4px 6px; cursor: default; }

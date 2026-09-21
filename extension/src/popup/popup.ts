@@ -237,7 +237,7 @@ async function updateFilteredSubscription() {
   btn.disabled = true;
   btn.textContent = 'Updating…';
   const r = await request('updateSubscription', { id: sub.id });
-  btn.textContent = 'Update subscription';
+  btn.textContent = 'Update';
   if (r.ok) {
     const x = r.result as SubscriptionResult;
     toast(`Updated: ${x.added} new, ${x.updated} updated, ${x.removed} removed`);
@@ -369,6 +369,65 @@ async function loadSettings() {
     $('versions').textContent = `Extension ${app.extensionVersion} · Runtime ${h.nativeVersion} · Xray ${h.xrayVersion ?? 'missing'} · Protocol v${h.protocolVersion} · Secrets: ${h.keyStorage}`;
   }
   renderSubscriptions();
+  renderServerSettings();
+}
+
+let settingsFilter: ServerFilter = 'all';
+
+/** Settings → Servers: every server with a Remove button (single-server delete lives here only). */
+function renderServerSettings() {
+  settingsFilter = normalizeFilter(list, settingsFilter);
+  const sel = $<HTMLSelectElement>('srv-filter');
+  sel.replaceChildren(
+    ...filterOptions(list).map((f) => {
+      const o = document.createElement('option');
+      o.value = f.value;
+      o.textContent = f.label;
+      return o;
+    }),
+  );
+  sel.value = settingsFilter;
+  const subs = new Map(list.subscriptions.map((s) => [s.id, s.name]));
+  const shown = filterServers(list, settingsFilter);
+  $('srv-list').replaceChildren(
+    ...shown.map((s) => {
+      const li = document.createElement('li');
+      const grow = document.createElement('div');
+      grow.className = 'grow';
+      const n = document.createElement('div');
+      n.className = 'name';
+      n.textContent = s.name;
+      const d = document.createElement('div');
+      d.className = 'sub';
+      const origin = s.subscriptionId ? `subscription "${subs.get(s.subscriptionId) ?? '?'}"` : 'added manually';
+      d.textContent = `${protocolLine(s)} · ${origin}`;
+      grow.append(n, d);
+      const del = document.createElement('button');
+      del.className = 'link danger';
+      del.textContent = 'Remove';
+      del.title = 'Remove this server';
+      del.onclick = async () => {
+        if (del.dataset.armed !== '1') {
+          // Second click within 4 s confirms.
+          del.dataset.armed = '1';
+          del.textContent = 'Remove?';
+          setTimeout(() => {
+            del.dataset.armed = '';
+            del.textContent = 'Remove';
+          }, 4000);
+          return;
+        }
+        const r = await request('deleteServer', { id: s.id });
+        showResult($('settings-result'), r.ok ? `Removed server "${s.name}".` : r.error.message, !r.ok);
+        await refreshList();
+        renderServerSettings();
+        renderSubscriptions();
+      };
+      li.append(grow, del);
+      return li;
+    }),
+  );
+  $('empty-srv').hidden = shown.length > 0;
 }
 
 function renderSubscriptions() {
@@ -421,6 +480,7 @@ function renderSubscriptions() {
         showResult($('settings-result'), r.ok ? `Removed subscription "${s.name}" and its servers.` : r.error.message, !r.ok);
         await refreshList();
         renderSubscriptions();
+        renderServerSettings();
       };
       li.append(grow, upd, del);
       return li;
@@ -533,6 +593,10 @@ function wire() {
   $<HTMLSelectElement>('server-filter').onchange = (e) => void onFilterChange((e.target as HTMLSelectElement).value);
   $('server-rename').onclick = () => startRename();
   $('sub-update').onclick = () => void updateFilteredSubscription();
+  $<HTMLSelectElement>('srv-filter').onchange = (e) => {
+    settingsFilter = (e.target as HTMLSelectElement).value;
+    renderServerSettings();
+  };
   $('rename-save').onclick = () => void finishRename(true);
   $('rename-cancel').onclick = () => void finishRename(false);
   $<HTMLInputElement>('rename-input').onkeydown = (e) => {

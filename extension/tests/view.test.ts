@@ -87,6 +87,15 @@ describe('server filter', () => {
     expect(filterServers(list, 'sub:s1').map((s) => s.id)).toEqual(['w1', 'w2']);
   });
 
+  it('hides "Manually added" when every server came from a subscription', () => {
+    const onlySubs = { ...list, servers: list.servers.filter((s) => s.subscriptionId) };
+    expect(filterOptions(onlySubs).map((o) => o.value)).toEqual(['all', 'sub:s1', 'sub:s2']);
+    expect(normalizeFilter(onlySubs, 'manual')).toBe('all');
+    // A subscription without servers is still offered (so it can be updated).
+    const emptySub = { ...list, servers: [], subscriptions: list.subscriptions };
+    expect(filterOptions(emptySub).map((o) => o.label)).toEqual(['All servers (0)', 'Subscription: Work (0)', 'Subscription: Home (0)']);
+  });
+
   it('falls back to all for unknown or deleted subscriptions', () => {
     expect(normalizeFilter(list, 'sub:gone')).toBe('all');
     expect(normalizeFilter(list, undefined)).toBe('all');

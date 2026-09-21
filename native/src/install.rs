@@ -179,7 +179,8 @@ pub fn uninstall(target_dir: &Path, purge: bool) -> Result<Vec<String>, String> 
     platform::unregister(&mut log);
     if purge {
         let data = paths::data_dir();
-        let _ = crate::secrets::KeyringProvider.delete_key();
+        // Only the key that protects *this* data directory (see secrets::KeyringProvider).
+        let _ = crate::secrets::default_provider(&data).delete();
         // Only fixed product paths are deleted, and a link is removed itself, never followed.
         for d in [data.clone(), paths::log_dir()] {
             if crate::harden::is_link(&d) {
@@ -196,12 +197,6 @@ pub fn uninstall(target_dir: &Path, purge: bool) -> Result<Vec<String>, String> 
     Ok(log)
 }
 
-impl crate::secrets::KeyringProvider {
-    fn delete_key(&self) -> Result<(), crate::secrets::SecretError> {
-        use crate::secrets::KeyProvider;
-        self.delete()
-    }
-}
 
 #[cfg(windows)]
 mod platform {

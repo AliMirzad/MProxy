@@ -36,7 +36,7 @@
           <div class="row server-tools">
             <button id="nav-import" type="button">+ Import</button>
             <button id="server-rename" type="button">Rename</button>
-            <button id="sub-update" type="button" hidden>Update subscription</button>
+            <button id="sub-update" type="button" title="Update the subscription chosen in Show" hidden>Update</button>
           </div>
           <p id="empty-servers" class="muted" hidden>No servers yet. Click <b>+ Import</b> to add a VLESS or VMess configuration.</p>
         </div>
@@ -112,6 +112,11 @@
 
       <h2>Privacy</h2>
       <label class="check"><input id="webrtc" type="checkbox" /> Block WebRTC from revealing your real IP while connected (recommended)</label>
+
+      <h2>Servers</h2>
+      <select id="srv-filter" aria-label="Show servers"></select>
+      <ul id="srv-list" class="list compact"></ul>
+      <p id="empty-srv" class="muted small" hidden>No servers.</p>
 
       <h2>Subscriptions</h2>
       <ul id="sub-list" class="list"></ul>
