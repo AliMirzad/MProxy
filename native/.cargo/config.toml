@@ -1,0 +1,14 @@
+# Windows builds with llvm-mingw (gnullvm): link libunwind statically so the helper needs no
+# DLLs beyond the OS (UCRT api-ms-win-crt-* ships with Windows 10/11).
+[target.x86_64-pc-windows-gnullvm]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.aarch64-pc-windows-gnullvm]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+# MSVC builds: static CRT so no Visual C++ Redistributable is required.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.aarch64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

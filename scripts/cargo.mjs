@@ -51,5 +51,6 @@ if (process.platform === 'win32' && !env.PRIVATE_PROXY_FORCE_DEFAULT_TOOLCHAIN) 
   }
 }
 
-const r = spawnSync('cargo', [...toolchain, ...args, '--manifest-path', join(root, 'native', 'Cargo.toml')], { stdio: 'inherit', env, shell: false });
+// Run inside native/ so native/.cargo/config.toml (static CRT/libunwind) applies.
+const r = spawnSync('cargo', [...toolchain, ...args], { stdio: 'inherit', env, shell: false, cwd: join(root, 'native') });
 process.exit(r.status ?? 1);

@@ -31,7 +31,9 @@ const controller = new Controller({
 });
 
 function fromOwnPage(sender: chrome.runtime.MessageSender): boolean {
-  return sender.id === chrome.runtime.id && !sender.tab && typeof sender.url === 'string' && sender.url.startsWith(chrome.runtime.getURL(''));
+  // Our own pages only (the popup, possibly opened in a tab for debugging). Web pages cannot
+  // message us: there is no externally_connectable and no content script.
+  return sender.id === chrome.runtime.id && typeof sender.url === 'string' && sender.url.startsWith(chrome.runtime.getURL(''));
 }
 
 // Registering these listeners makes Chromium start the worker at browser startup, which
