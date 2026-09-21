@@ -13,8 +13,6 @@ let view: 'main' | 'import' | 'settings' = 'main';
 let busyAction = false;
 let serverFilter: ServerFilter = 'all';
 let renaming = false;
-/** A pending destructive action waiting for the user's confirmation. */
-let confirmAction: { text: string; label: string; run: () => Promise<void> } | null = null;
 
 /** The server shown as selected in the dropdown (what Rename/Delete/Connect act on). */
 function selectedServer() {
@@ -133,18 +131,11 @@ function render() {
   $('protocol-line').textContent = server
     ? `${protocolLine(server)} · ${server.address}:${server.port}${subName ? ` · from "${subName}"` : ''}`
     : '';
-  const busy = locked || renaming || !!confirmAction;
+  // No delete on the main page: subscriptions (with their servers) are removed in Settings.
+  const busy = locked || renaming;
   $<HTMLButtonElement>('server-rename').disabled = busy || !server;
-  $<HTMLButtonElement>('server-delete').disabled = busy || !server;
-  const sub = filteredSubscription();
-  $('sub-tools').hidden = !sub;
+  $('sub-update').hidden = !filteredSubscription();
   $<HTMLButtonElement>('sub-update').disabled = busy;
-  $<HTMLButtonElement>('sub-delete').disabled = busy;
-  $('confirm-row').hidden = !confirmAction;
-  if (confirmAction) {
-    $('confirm-text').textContent = confirmAction.text;
-    $('confirm-yes').textContent = confirmAction.label;
-  }
   $('empty-servers').hidden = list.servers.length > 0;
 
   // Primary button
@@ -237,50 +228,6 @@ async function finishRename(save: boolean) {
   }
   await refreshList();
   render();
-}
-
-function askConfirm(text: string, label: string, run: () => Promise<void>) {
-  confirmAction = { text, label, run };
-  render();
-}
-
-async function answerConfirm(yes: boolean) {
-  const action = confirmAction;
-  confirmAction = null;
-  render();
-  if (yes && action) await action.run();
-}
-
-function deleteSelected() {
-  const server = selectedServer();
-  if (!server) return;
-  askConfirm(`Delete server "${server.name}"?`, 'Delete server', async () => {
-    const r = await request('deleteServer', { id: server.id });
-    if (r.ok) toast(`Deleted "${server.name}"`);
-    else toast(r.error.message);
-    await refreshList();
-  });
-}
-
-function deleteFilteredSubscription() {
-  const sub = filteredSubscription();
-  if (!sub) return;
-  const n = list.servers.filter((x) => x.subscriptionId === sub.id).length;
-  askConfirm(`Delete subscription "${sub.name}" and its ${n} server${n === 1 ? '' : 's'}?`, 'Delete subscription', async () => {
-    const r = await request('deleteSubscription', { id: sub.id, deleteServers: true });
-    if (r.ok) {
-      toast(`Deleted subscription "${sub.name}"`);
-      serverFilter = 'all';
-      try {
-        await chrome.storage.local.set({ serverFilter });
-      } catch {
-        /* preference only */
-      }
-    } else {
-      toast(r.error.message);
-    }
-    await refreshList();
-  });
 }
 
 async function updateFilteredSubscription() {
@@ -456,16 +403,22 @@ function renderSubscriptions() {
         renderSubscriptions();
       };
       const del = document.createElement('button');
-      del.className = 'link';
+      del.className = 'link danger';
       del.textContent = 'Remove';
+      del.title = 'Remove this subscription and all its servers';
       del.onclick = async () => {
         if (del.dataset.armed !== '1') {
+          // Second click within 4 s confirms.
           del.dataset.armed = '1';
-          del.textContent = 'Remove with its servers?';
+          del.textContent = `Remove with its ${s.serverCount} servers?`;
+          setTimeout(() => {
+            del.dataset.armed = '';
+            del.textContent = 'Remove';
+          }, 4000);
           return;
         }
         const r = await request('deleteSubscription', { id: s.id, deleteServers: true });
-        if (!r.ok) toast(r.error.message);
+        showResult($('settings-result'), r.ok ? `Removed subscription "${s.name}" and its servers.` : r.error.message, !r.ok);
         await refreshList();
         renderSubscriptions();
       };
@@ -579,11 +532,7 @@ function wire() {
   };
   $<HTMLSelectElement>('server-filter').onchange = (e) => void onFilterChange((e.target as HTMLSelectElement).value);
   $('server-rename').onclick = () => startRename();
-  $('server-delete').onclick = () => deleteSelected();
-  $('sub-delete').onclick = () => deleteFilteredSubscription();
   $('sub-update').onclick = () => void updateFilteredSubscription();
-  $('confirm-yes').onclick = () => void answerConfirm(true);
-  $('confirm-no').onclick = () => void answerConfirm(false);
   $('rename-save').onclick = () => void finishRename(true);
   $('rename-cancel').onclick = () => void finishRename(false);
   $<HTMLInputElement>('rename-input').onkeydown = (e) => {

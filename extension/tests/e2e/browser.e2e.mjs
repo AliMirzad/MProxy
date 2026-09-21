@@ -279,18 +279,7 @@ try {
   // Server management through the real popup buttons.
   {
     const optionNames = () => popup.$$eval('#server-select option', (els) => els.map((e) => e.textContent.replace(/^● /, '')));
-    // Delete one server (the dead one): Delete server -> confirmation -> gone.
-    await popup.click('#primary').catch(() => undefined); // leave the error state
-    await waitFor(async () => (await popupState(popup)) === 'Disconnected', 'disconnected before delete', 10000).catch(() => undefined);
-    const deadId = await popup.$eval('#server-select', (sel) => [...sel.options].find((o) => o.textContent === 'E2E Dead Server')?.value);
-    await popup.selectOption('#server-select', deadId);
-    await popup.click('#server-delete');
-    const confirmText = await popup.textContent('#confirm-text');
-    check('Delete server asks for confirmation naming the server', /Delete server "E2E Dead Server"/.test(confirmText ?? ''), confirmText);
-    await popup.click('#confirm-yes');
-    await waitFor(async () => !(await optionNames()).includes('E2E Dead Server'), 'server deleted', 10000).catch(() => undefined);
-    check('Delete server removes exactly that server', !(await optionNames()).includes('E2E Dead Server') && (await optionNames()).length === 3, (await optionNames()).join(', '));
-
+    check('main page has no delete buttons', (await popup.$('#server-delete')) === null && (await popup.$('#sub-delete')) === null);
     // Subscription: add, filter, update, delete with its servers.
     let subBody = ['A', 'B'].map((n) => `vless://5783a3e7-e373-51cd-8642-c83782b807c5@sub${n.toLowerCase()}.example.com:443?security=tls&sni=sub.example.com#Sub%20${n}`).join('\n');
     const subSrv = http.createServer((_q, res) => res.end(Buffer.from(subBody).toString('base64'))).listen(0, '127.0.0.1');
@@ -310,21 +299,27 @@ try {
     check('filtering by subscription shows only its servers', JSON.stringify(await optionNames()) === JSON.stringify(['Sub A', 'Sub B']), (await optionNames()).join(', '));
     await popup.selectOption('#server-filter', 'manual');
     await popup.waitForTimeout(300);
-    check('"Manually added" shows only hand-imported servers', !(await optionNames()).some((n) => n.startsWith('Sub ')) && (await optionNames()).length === 3, (await optionNames()).join(', '));
+    check('"Manually added" shows only hand-imported servers', !(await optionNames()).some((n) => n.startsWith('Sub ')) && (await optionNames()).length === 4, (await optionNames()).join(', '));
     await popup.selectOption('#server-filter', subOpt[0]);
     await popup.waitForTimeout(300);
-    check('subscription tools appear when a subscription is chosen', await popup.isVisible('#sub-update') && await popup.isVisible('#sub-delete'));
+    check('Update subscription appears when a subscription is chosen', await popup.isVisible('#sub-update'));
     subBody += '\nvless://5783a3e7-e373-51cd-8642-c83782b807c5@subc.example.com:443?security=tls&sni=sub.example.com#Sub%20C';
     await popup.click('#sub-update');
     await waitFor(async () => (await optionNames()).includes('Sub C'), 'subscription updated', 15000).catch(() => undefined);
     check('Update subscription fetches the new server list', (await optionNames()).includes('Sub C'), (await optionNames()).join(', '));
-    await popup.click('#sub-delete');
-    const subConfirm = await popup.textContent('#confirm-text');
-    check('Delete subscription asks for confirmation with the server count', /Delete subscription "E2E Sub" and its 3 servers/.test(subConfirm ?? ''), subConfirm);
-    await popup.click('#confirm-yes');
-    await waitFor(async () => !(await optionNames()).some((n) => n.startsWith('Sub ')), 'subscription deleted', 10000).catch(() => undefined);
+    // Remove the subscription (and its servers) from Settings.
+    await popup.click('#nav-settings');
+    await popup.waitForTimeout(300);
+    const removeBtn = popup.locator('#sub-list li', { hasText: 'E2E Sub' }).locator('button', { hasText: 'Remove' });
+    await removeBtn.click();
+    const armed = await removeBtn.textContent();
+    check('Settings Remove asks for confirmation with the server count', /Remove with its 3 servers\?/.test(armed ?? ''), armed);
+    await removeBtn.click();
+    await waitFor(async () => /Removed subscription "E2E Sub"/.test((await popup.textContent('#settings-result')) ?? ''), 'subscription removed', 10000).catch(() => undefined);
+    await popup.click('#nav-back');
+    await popup.waitForTimeout(300);
     const afterFilters = await popup.$$eval('#server-filter option', (els) => els.map((e) => e.textContent));
-    check('Delete subscription removes it and all its servers', !(await optionNames()).some((n) => n.startsWith('Sub ')) && !afterFilters.some((t) => t.includes('E2E Sub')) && (await popup.$eval('#server-filter', (e) => e.value)) === 'all', `${(await optionNames()).join(', ')} | ${afterFilters.join(', ')}`);
+    check('Removing the subscription in Settings deletes it and all its servers', !(await optionNames()).some((n) => n.startsWith('Sub ')) && !afterFilters.some((t) => t.includes('E2E Sub')) && (await popup.$eval('#server-filter', (e) => e.value)) === 'all', `${(await optionNames()).join(', ')} | ${afterFilters.join(', ')}`);
     subSrv.close();
   }
 
