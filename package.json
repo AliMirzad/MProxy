@@ -14,7 +14,7 @@
     "test:native": "node scripts/cargo.mjs test",
     "test:extension": "npm --prefix extension run typecheck && npm --prefix extension test",
     "test:e2e": "node scripts/cargo.mjs build && node extension/tests/e2e/browser.e2e.mjs",
-    "lint": "node scripts/cargo.mjs clippy --all-targets -- -D warnings",
+    "lint": "node scripts/cargo.mjs clippy --all-targets -- -D warnings -A linker-messages",
     "licenses": "node scripts/third-party.mjs",
     "package": "node scripts/package.mjs"
   }

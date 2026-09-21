@@ -150,3 +150,15 @@ Fetched by the helper (so the tokenised URL stays in the encrypted store): HTTPS
 plain line lists of `vless://`/`vmess://` links, or JSON (single Xray config or an array of them).
 Refresh is manual. Servers keep their IDs across refreshes when (protocol, address, port, user id)
 match, so the selection survives.
+
+## Findings during implementation
+
+| # | Finding | Decision |
+|---|---|---|
+| TD-13 | `rustls` pulls in `ring`, which needs a C compiler; the dev machine had none | `reqwest` uses **native-tls** (SChannel on Windows, Security.framework on macOS). That means no C toolchain, and corporate root CAs from the OS trust store work |
+| TD-14 | No MSVC Build Tools available; the `windows-gnu` toolchain's bundled `dlltool` needs an assembler | Windows builds use **MSVC when present, otherwise `x86_64-pc-windows-gnullvm` + llvm-mingw** (`scripts/cargo.mjs`). `+crt-static` links libunwind/CRT statically, so the helper imports only OS DLLs (checked with `llvm-objdump`) |
+| TD-15 | A request to the IDE HTTP inbound for `http://127.0.0.1:10809/` made Xray proxy to itself recursively (local DoS) | Routing rules block loopback destinations on our own inbound ports (tested) |
+| TD-16 | Branded Google Chrome ≥ 137 ignores `--load-extension` | Automated E2E uses Brave/Chromium. Chrome is covered by the manual checklist. The product itself is unaffected: users load it via Developer mode |
+| TD-17 | On Windows a just-killed Xray can hold its listening ports for a moment | Port checks retry for up to 1.5 s before declaring an IDE port "in use" |
+| TD-18 | `chrome.proxy` `regular`-scope settings survive browser restarts | The service worker clears the setting on every start. The E2E test kills the browser while connected and asserts no stale proxy after restart |
+| TD-19 | Raw OS errors (e.g. "os error 10054") are meaningless to users | The helper maps failures to short messages plus error codes. Details go to the redacted log |
