@@ -1,4 +1,4 @@
-// Generates the MProxy toolbar icons (gradient rounded square with an "M") as PNGs,
+// Generates the MProxy toolbar icons (gradient tile, white shield with an "M") as PNGs,
 // without any image dependencies. Run: node scripts/make-icons.mjs
 import { deflateSync } from 'node:zlib';
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -42,12 +42,23 @@ function distToSegment(px, py, ax, ay, bx, by) {
   const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)));
   return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
 }
-const M = [[0.27, 0.72], [0.27, 0.30], [0.5, 0.56], [0.73, 0.30], [0.73, 0.72]];
+// White shield with an "M" cut out of it (showing the gradient), plus a soft glass highlight.
+const SHIELD = [[0.5, 0.15], [0.8, 0.26], [0.8, 0.49], [0.74, 0.65], [0.5, 0.86], [0.26, 0.65], [0.2, 0.49], [0.2, 0.26]];
+const M = [[0.375, 0.63], [0.375, 0.39], [0.5, 0.535], [0.625, 0.39], [0.625, 0.63]];
+function inPolygon(x, y, poly) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [xi, yi] = poly[i], [xj, yj] = poly[j];
+    if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
 
 function png(size) {
   const px = Buffer.alloc(size * (size * 4 + 1));
   const r = size * 0.24;
-  const stroke = Math.max(1.4, size * 0.105);
+  // Thicker strokes at small sizes so the M stays readable at 16 px.
+  const stroke = size <= 16 ? 0.12 : size <= 32 ? 0.1 : 0.085;
   const N = 4;
   for (let y = 0; y < size; y++) {
     px[y * (size * 4 + 1)] = 0;
@@ -60,12 +71,17 @@ function png(size) {
           const dy = Math.max(r - cy, 0, cy - (size - r));
           if (Math.hypot(dx, dy) > r) continue;
           cover++;
+          const u = cx / size, v = cy / size;
+          if (!inPolygon(u, v, SHIELD)) continue;
           let d = Infinity;
-          for (let i = 0; i + 1 < M.length; i++) d = Math.min(d, distToSegment(cx, cy, M[i][0] * size, M[i][1] * size, M[i + 1][0] * size, M[i + 1][1] * size));
-          if (d <= stroke / 2) white++;
+          for (let i = 0; i + 1 < M.length; i++) d = Math.min(d, distToSegment(u, v, M[i][0], M[i][1], M[i + 1][0], M[i + 1][1]));
+          if (d > stroke / 2) white++;
         }
       }
-      const [gr, gg, gb] = gradient((x + y) / (2 * size));
+      let [gr, gg, gb] = gradient((x + y) / (2 * size));
+      // glass highlight on the upper part of the tile
+      const gloss = Math.max(0, 0.18 * (1 - (y + 0.5) / (size * 0.55)));
+      gr = lerp(gr, 255, gloss); gg = lerp(gg, 255, gloss); gb = lerp(gb, 255, gloss);
       const w = cover ? white / cover : 0;
       const o = y * (size * 4 + 1) + 1 + x * 4;
       px[o] = Math.round(lerp(gr, 255, w));

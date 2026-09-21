@@ -317,3 +317,6 @@ input[type="checkbox"] { accent-color: var(--accent-b); width: 15px; height: 15p
 
 /* The hidden attribute must win over display rules such as .row { display: flex }. */
 [hidden] { display: none !important; }
+
+/* Header logo is the extension icon itself. */
+img.logo { display: block; background: none; object-fit: cover; }
