@@ -96,8 +96,19 @@ impl Proc {
         #[cfg(not(windows))]
         let r = {
             use std::process::{Command, Stdio};
-            Command::new(xray)
-                .args(args)
+            #[cfg(target_os = "macos")]
+            let mut c = match crate::macsandbox::usable(xray) {
+                Ok(()) => {
+                    let mut c = Command::new(crate::macsandbox::SANDBOX_EXEC);
+                    // Canonical path: the profile allows exec of exactly this file.
+                    c.arg("-p").arg(crate::macsandbox::profile(xray, &crate::paths::home_dir())).arg(std::fs::canonicalize(xray).unwrap_or_else(|_| xray.to_path_buf()));
+                    c
+                }
+                Err(_) => Command::new(xray),
+            };
+            #[cfg(not(target_os = "macos"))]
+            let mut c = Command::new(xray);
+            c.args(args)
                 .env_clear()
                 .current_dir(dir)
                 .stdin(if stdin { Stdio::piped() } else { Stdio::null() })
@@ -226,7 +237,12 @@ impl Running {
     pub fn isolation(&self) -> Option<serde_json::Value> {
         #[cfg(windows)]
         return crate::winproc::isolation_of(self.pid).and_then(|i| serde_json::to_value(i).ok());
-        #[cfg(not(windows))]
+        #[cfg(target_os = "macos")]
+        return crate::macsandbox::state().map(|r| match r {
+            Ok(()) => serde_json::json!({ "sandbox": true }),
+            Err(e) => serde_json::json!({ "sandbox": false, "reason": e }),
+        });
+        #[cfg(not(any(windows, target_os = "macos")))]
         None
     }
 }

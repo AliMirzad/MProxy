@@ -9,6 +9,7 @@
 import { spawnSync, execSync } from 'node:child_process';
 import { existsSync, readdirSync } from 'node:fs';
 import { dirname, join, delimiter } from 'node:path';
+import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { targetDir } from './target-dir.mjs';
 
@@ -31,7 +32,8 @@ function hasMsvcLinker() {
 function findLlvmMingw() {
   const candidates = [];
   if (process.env.LLVM_MINGW) candidates.push(process.env.LLVM_MINGW);
-  for (const base of [join(process.env.TEMP || '', 'claude-tools'), join(root, '.tools'), 'C:\\llvm-mingw']) {
+  // A permanent per-user folder first: Windows' temp cleanup may delete copies under %TEMP%.
+  for (const base of [join(homedir(), '.private-proxy-tools'), join(root, '.tools'), join(process.env.TEMP || '', 'claude-tools'), 'C:\\llvm-mingw']) {
     if (existsSync(base)) {
       for (const d of readdirSync(base)) if (d.startsWith('llvm-mingw')) candidates.push(join(base, d));
       if (base.endsWith('llvm-mingw')) candidates.push(base);

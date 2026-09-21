@@ -7,6 +7,8 @@
 pub mod harden;
 pub mod install;
 pub mod log;
+#[cfg(any(target_os = "macos", test))]
+pub mod macsandbox;
 pub mod model;
 pub mod netpolicy;
 pub mod nm;
