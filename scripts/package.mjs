@@ -63,6 +63,20 @@ const stage = join(dist, name);
 rmSync(stage, { recursive: true, force: true });
 mkdirSync(join(stage, 'xray'), { recursive: true });
 cpSync(hostBin, join(stage, exe));
+// Optional code signing of the helper (see docs/installation.md, "Code signing"). Xray is never
+// re-signed: its pinned SHA-256 covers the official, unmodified file.
+if (win && process.env.PRIVATE_PROXY_SIGN_THUMBPRINT) {
+  run(join(process.env.SystemRoot || "C:\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe"), [
+    "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", join(root, "scripts/sign-windows.ps1"),
+    "-File", join(stage, exe), "-Thumbprint", process.env.PRIVATE_PROXY_SIGN_THUMBPRINT,
+    ...(process.env.PRIVATE_PROXY_SIGN_TIMESTAMP ? ["-TimestampServer", process.env.PRIVATE_PROXY_SIGN_TIMESTAMP] : []),
+  ]);
+} else if (!win && process.env.PRIVATE_PROXY_CODESIGN_IDENTITY) {
+  // Developer ID + hardened runtime + secure timestamp (required for notarization).
+  run("/usr/bin/codesign", ["--force", "--options", "runtime", "--timestamp", "--sign", process.env.PRIVATE_PROXY_CODESIGN_IDENTITY, join(stage, exe)]);
+} else {
+  console.log("note: helper not code-signed (set PRIVATE_PROXY_SIGN_THUMBPRINT on Windows or PRIVATE_PROXY_CODESIGN_IDENTITY on macOS)");
+}
 const xdir = join(root, 'native/xray/dist', platform);
 cpSync(join(xdir, win ? 'xray.exe' : 'xray'), join(stage, 'xray', win ? 'xray.exe' : 'xray'));
 cpSync(join(xdir, 'LICENSE'), join(stage, 'xray', 'LICENSE'));

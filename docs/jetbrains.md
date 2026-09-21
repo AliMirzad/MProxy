@@ -39,7 +39,10 @@ direct, even when connected.
    * Host name: `127.0.0.1`
    * Port number: `10809`
    * No proxy for: `localhost, 127.0.0.1, ::1` (plus your intranet hosts if they must stay direct)
-   * Leave **Proxy authentication** unchecked (the endpoint is loopback-only and has no password).
+   * Check **Proxy authentication** and enter the **username** and **password** shown in the extension:
+     Settings → JetBrains / IDE proxy (Copy buttons). The password is required by default, so other
+     programs and other users on the computer cannot use the endpoint. "New password" replaces it;
+     then update the IDE too.
 4. Click **Check connection**, enter `https://www.jetbrains.com`, and confirm it succeeds.
    To confirm the tunnel is used, connect in the extension first, then check a URL that is only
    reachable through your server (or compare the IP reported by `https://ifconfig.me/ip`).

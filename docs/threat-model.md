@@ -50,8 +50,8 @@ File references point at the code that enforces a control.
   to the user profile or registry, cannot inject into Medium processes, and cannot start programs.
   All of this was verified at runtime (`xray_isolation_and_listeners`).
 * **Residual risk:** a server operator always sees metadata (see "What a proxy operator can
-  observe" below). On macOS Xray runs as the user without OS isolation: Xray code execution
-  there would have the user's file access (**gap, see security-gate B13/B14**). Browser exploits
+  observe" below). On macOS the Seatbelt sandbox (`macsandbox.rs`) blocks file writes, reads in the home
+  folder and starting programs, but it is **not yet validated on a real Mac** (security-gate B13m). Browser exploits
   delivered through plain-HTTP content are outside this product's control. Keep the browser updated.
 
 ### 2. Compromised proxy server (a legitimate server taken over)
@@ -176,9 +176,11 @@ subscription provider can (attacker 3). Mitigations and residual risk are as for
   protected DACL (user + SYSTEM) and a no-read-up label (Windows) or 0700 (macOS). Secrets are
   encrypted with a key in Credential Manager/Keychain. The install directory has a private ACL, and
   the macOS `.pkg` installs root-owned binaries.
-* **Residual risk:** the proxy listeners are **unauthenticated**. Any local process, including
-  processes of other users on a shared machine, can use them while they exist. Chrome cannot pass
-  SOCKS credentials. On multi-user machines (terminal servers), disable the IDE endpoint. Processes
+* **Additional mitigation:** the IDE HTTP/SOCKS endpoint **requires a username and password by default**. The
+  password is generated randomly (24 characters), stored encrypted, shown in Settings and can be regenerated.
+  If the password cannot be loaded, the IDE endpoint stays off rather than opening without it.
+* **Residual risk:** the browser's own SOCKS port cannot have a password (Chromium limitation). It is a random
+  port that exists only while connected, and any local process could use it during that time. Processes
   of the **same user** are out of scope: they can read the user's keychain, the browser's memory,
   and so on.
 
@@ -236,7 +238,7 @@ Low-integrity boundary.
 | Safe DLL loading | `DependentLoadFlags=System32` + `SetDefaultDllDirectories` | prefer-System32 policy (Go loads System32 DLLs by absolute path) | **Applied**; a planted-DLL test proves the V1 build was affected and the current one is not |
 | Restrictive ACLs | data dir: user + SYSTEM, no-read-up label; install dir: user + SYSTEM + Administrators | — | **Applied** |
 | Environment | — | cleared (`SystemRoot` only) | **Applied** |
-| macOS App Sandbox / `sandbox-exec` for Xray | evaluated | evaluated | **Not applied in V1**: `sandbox-exec` is deprecated, and without a Mac to validate network, loopback-listen and Keychain behaviour it would be an untested mechanism. Recommended as the first macOS hardening item |
+| macOS `sandbox-exec` (Seatbelt) for Xray | — | no fork, exec only Xray itself, no file writes, no reads in the home folder except Xray's dir | **Applied** (`macsandbox.rs`) with a per-session self-test. If the sandbox fails, Xray runs unsandboxed and Diagnostics says so. Not yet validated on a Mac |
 | macOS hardened runtime + Developer ID signing + notarization | — | — | **Documented, not performed** (needs certificates; see installation.md) |
 | Core dumps disabled, `umask 077` (Unix) | yes | inherited | **Applied** |
 

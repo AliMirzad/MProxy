@@ -49,6 +49,8 @@ Rules enforced by the helper:
 | `getSettings` | `{}` | Settings |
 | `setSettings` | partial Settings | Settings + `reconnectRequired` |
 | `getDiagnostics` | `{}` | versions, paths, `xrayPid`, key storage; recent Xray output only when debug logging is on |
+| `getIdeCredentials` | `{}` | `{username, password, required, reconnectRequired}`. Credentials of the IDE endpoint (password created on first use, stored encrypted). Never part of any other response |
+| `regenerateIdeCredentials` | `{}` | same, with a new password; running IDE inbounds are restarted (or `reconnectRequired` while tunnelling) |
 | `resetAll` | `{confirm: true}` | `{}`. Deletes all servers, subscriptions, secrets and the data key |
 
 ## Status
@@ -60,7 +62,7 @@ Rules enforced by the helper:
   "serverId": "…",
   "proxy": { "scheme": "socks5", "host": "127.0.0.1", "port": 53123 },  // connected only
   "error": { "code": "SERVER_UNREACHABLE", "message": "…" },            // error only
-  "jetbrains": { "enabled": true, "mode": "tunnel"|"direct"|"off", "socksPort": 10808, "httpPort": 10809, "issue": null },
+  "jetbrains": { "enabled": true, "mode": "tunnel"|"direct"|"off", "socksPort": 10808, "httpPort": 10809, "issue": null, "authRequired": true },
   "xrayAvailable": true
 }
 ```

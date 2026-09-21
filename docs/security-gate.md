@@ -14,10 +14,10 @@ Test suites referenced below:
 
 | Suite | Command | Result |
 |---|---|---|
-| Native unit tests (incl. `parse/security_tests.rs`, `netpolicy`, `harden`, `winproc`) | `node scripts/cargo.mjs test --lib` | 70/70 |
-| Native integration tests (real helper process, real restricted Xray, local Xray server) | `node scripts/cargo.mjs test --test integration` | 13/13 |
-| Extension unit + security tests (`tests/security.test.ts`) | `npm --prefix extension test` | 47/47 |
-| Real-browser E2E (Brave, real installer, attacker page + attacker extension) | `npm run test:e2e` | 41/41 |
+| Native unit tests (incl. `parse/security_tests.rs`, `netpolicy`, `harden`, `winproc`, `macsandbox`) | `node scripts/cargo.mjs test --lib` | 71/71 |
+| Native integration tests (real helper process, real restricted Xray, local Xray server) | `node scripts/cargo.mjs test --test integration` | 14/14 |
+| Extension unit + security tests (`tests/security.test.ts`) | `npm --prefix extension test` | 50/50 |
+| Real-browser E2E (Brave, real installer, attacker page + attacker extension) | `npm run test:e2e` | 46/46 |
 | `cargo clippy -D warnings` (Windows x64, macOS arm64 + x64) | `npm run lint` | clean |
 | `cargo audit` (1,253 advisories, 171 crates) / `npm audit` | — | 0 / 0 |
 
@@ -53,10 +53,11 @@ Test suites referenced below:
 | B9 | Extension identity cannot be spoofed by another locally loaded **unpacked** extension | **FAIL: MEDIUM** | Unpacked IDs derive from the public key in the manifest. A malicious unpacked extension could reuse it. Mitigation for rollout: policy force-installed CRX + Developer mode disabled by policy (threat-model #10) |
 | B10 | Web pages cannot reach the extension or the helper | **PASS** | E2E hostile page: no `chrome.runtime`, extension resources blocked, IDE endpoint not usable as a relay. Manifest test: no content scripts, `externally_connectable` or web-accessible resources |
 | B11 | Listeners bound to loopback only; no unexpected sockets | **PASS** | Integration `xray_isolation_and_listeners`: netstat enumeration shows exactly 3 TCP listeners (browser, IDE SOCKS, IDE HTTP) on 127.0.0.1, no UDP, and the helper listens on nothing. Generated-config tests assert `listen: 127.0.0.1` |
-| B12 | Local listeners usable only by the intended user | **FAIL: MEDIUM** (accepted for single-user machines) | Listeners are unauthenticated (Chrome cannot pass SOCKS credentials). On multi-user hosts, disable the IDE endpoint |
+| B12 | IDE endpoint (10809/10808) usable only with the user's credentials | **PASS** | On by default. Integration `ide_endpoint_requires_password`: no/wrong credentials → HTTP 407, SOCKS refused, in direct and tunnel mode. Regenerating invalidates the old password. E2E: 407 without the password, 200 with it |
+| B12b | Browser SOCKS port usable only by the intended user | **FAIL: LOW** (residual) | Chromium cannot send SOCKS credentials, so this port has none. It is a random port that exists only while connected |
 | B13 | Xray isolated from the host (Low integrity, no child processes, job, mitigations) | **PASS** (Windows) | Integration + E2E (installed runtime): OS reports `integrity=low`, `childProcessesBlocked`, `extensionPointsDisabled`, `remoteImagesBlocked` |
-| B13m | Same on macOS | **FAIL: MEDIUM** | Not implemented. Xray runs as the user with a cleared environment only (see the isolation evaluation in threat-model.md) |
-| B14 | A compromised Xray cannot read stored credentials or write user files | **PASS** (Windows) | Integration: a Low-integrity process under the same token cannot `type secrets.bin` (Medium control can) and cannot write into `%USERPROFILE%`. macOS: covered by B13m (**FAIL**) |
+| B13m | Same on macOS: Seatbelt sandbox (no fork/exec, no file writes, no reads in the home folder except Xray's dir) | **NOT TESTED** | Implemented (`macsandbox.rs`) with a per-session self-test. If the sandbox cannot run, Xray runs unsandboxed and Diagnostics shows `sandbox: false`. The profile is unit-tested; the code compiles for macOS arm64/x64. It needs a run on a real Mac |
+| B14 | A compromised Xray cannot read stored credentials or write user files | **PASS** (Windows) | Integration: a Low-integrity process under the same token cannot `type secrets.bin` (Medium control can) and cannot write into `%USERPROFILE%`. macOS: by the B13m profile (**NOT TESTED**) |
 | B15 | No privilege escalation; runtime never runs as admin/root | **PASS** (Windows) | Install and run in E2E without elevation. Helper at Medium, Xray at Low. macOS `.pkg` (root only during install): **NOT TESTED** |
 | B16 | Xray binary integrity verified before every launch | **PASS** | Integration `tampered_xray_is_never_executed`: 1-bit-modified Xray and a foreign executable are both refused, never started, `xrayAvailable=false`. The installer refuses to install a non-pinned Xray |
 | B17 | Xray artifacts are official and pinned | **PASS** | Zip SHA-256 values match upstream `.dgst` for all 4 platforms (checked 2026-09-21). Binary SHA-256 pinned in `xray.lock.json` |
@@ -76,16 +77,15 @@ Test suites referenced below:
 | B31 | Builds reproducible from lockfiles | **NOT TESTED** in CI | `--locked` in package.mjs and CI, `npm ci`. The CI workflow has not been run |
 | B32 | Release builds ignore test hooks | **PASS** | Manual run with every `PRIVATE_PROXY_*` variable set: real data dir, no Xray override. The debug binary honours them only in test mode |
 | B33 | Uninstall does not execute or follow imported data | **PASS** | Uninstall deletes fixed paths. E2E runs `uninstall --purge`. Links removed without following (code). The delayed `cmd` removal branch: **NOT TESTED** |
-| B34 | Signed binaries (Authenticode / Developer ID + notarization) | **FAIL: MEDIUM** | V1 builds are unsigned. Required before company-wide rollout (installation.md) |
+| B34 | Signed binaries (Authenticode / Developer ID + notarization) | **FAIL: MEDIUM** | Signing is built into packaging (`PRIVATE_PROXY_SIGN_THUMBPRINT` / `PRIVATE_PROXY_CODESIGN_IDENTITY`, `scripts/sign-windows.ps1`), but no certificate is available, so the current builds are unsigned. A certificate must come from a CA or the company's IT |
 
 ## Result
 
 * **CRITICAL / HIGH unresolved: none.**
 * **FAIL, MEDIUM:**
-  * B9: unpacked extension ID spoofing
-  * B12: unauthenticated loopback listeners on multi-user machines
-  * B13m/B14 (macOS): no OS isolation for Xray
-  * B34: unsigned builds
+  * B9: unpacked extension ID spoofing (mitigated by policy CRX distribution)
+  * B34: unsigned builds (signing support ready; needs a certificate)
+* **FAIL, LOW:** B12b: the browser's own ephemeral SOCKS port has no password (Chromium limitation).
 * **NOT TESTED (runtime):**
   * everything on macOS
   * IPv6
@@ -94,12 +94,10 @@ Test suites referenced below:
   * the Windows installer's absolute-path invocation
   * CI
 
-**Designation:** the **Windows** build meets the gate for **controlled company pilot use**, on two conditions:
-1. The extension is distributed as a policy-installed CRX with Developer mode disabled (closes B9).
-2. The runtime is deployed only on single-user machines, or with the IDE endpoint disabled (B12).
-
-Signing (B34) is required before broad rollout. The **macOS** build is **not company-ready** until the
-macOS items are validated on real hardware and B13m is addressed.
+**Designation:** the **Windows** build meets the gate for **controlled company pilot use** if the extension is
+distributed as a policy-installed CRX with Developer mode disabled (closes B9). Signing (B34) is required before
+broad rollout. The **macOS** build has its isolation implemented, but it is **not company-ready** until the
+macOS items (B13m, installer, Keychain) are validated on real hardware.
 
 This result does not claim the product cannot be attacked or observed. It documents a minimized,
 tested attack surface, and the residual risks listed above and in the threat model.

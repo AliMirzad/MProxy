@@ -106,13 +106,30 @@ different protocol versions, the popup shows **Update required** and says which 
 
 Recommended order: runtime first, then extension. Within a protocol version, any combination works.
 
+## Code signing
+
+A code signature proves who built the runtime and that nobody changed it afterwards. Windows SmartScreen and macOS
+Gatekeeper warn about unsigned programs. Signing needs a **code-signing certificate**, which cannot be made by the
+project itself:
+
+* **Windows:** a certificate from a public CA (e.g. DigiCert, Sectigo; paid, yearly), or from the company's internal
+  CA if IT deploys its root to the machines by Group Policy. Install it in `Cert:\CurrentUser\My`, then:
+  `PRIVATE_PROXY_SIGN_THUMBPRINT=<SHA1 thumbprint> PRIVATE_PROXY_SIGN_TIMESTAMP=http://timestamp.digicert.com npm run package`.
+  The helper is signed by `scripts/sign-windows.ps1`.
+* **macOS:** an Apple Developer ID Application certificate (Apple Developer Program):
+  `PRIVATE_PROXY_CODESIGN_IDENTITY="Developer ID Application: …" npm run package -- --pkg`, then notarize (see above).
+* **Xray is not re-signed.** It ships byte-for-byte as the official release, and its pinned SHA-256 is checked before
+  every launch. For macOS notarization, which requires every executable to carry a Developer ID signature, sign Xray
+  in the release pipeline and pin the signed file's hash (`binarySha256`) instead.
+
 ## Security notes for company deployment
 
 * Distribute the extension as a **policy force-installed CRX** and disable Developer mode by policy
   (`ExtensionDeveloperModeSettings`, `ExtensionInstallBlocklist: ["*"]` + `ExtensionInstallAllowlist`). Unpacked
   extensions can claim any ID whose public key they copy (security-gate B9).
 * Sign the helper and Xray (Authenticode / Developer ID + notarization) before broad rollout (B34).
-* On multi-user machines (terminal servers), disable the IDE endpoint: loopback listeners are unauthenticated (B12).
+* The IDE endpoint requires a password by default (Settings shows it). Keep it on. The browser's own port has no
+  password (Chromium limitation) but exists only while connected.
 * The runtime verifies the Xray binary against the pinned SHA-256 before every launch. Never replace
   `xray.exe`/`xray` by hand.
 * No step needs administrator rights except the optional macOS `.pkg` (only during installation).

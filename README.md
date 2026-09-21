@@ -87,6 +87,9 @@ paths, the `.pkg`, and signing/notarization are in [docs/installation.md](docs/i
 
 ## Importing a server
 
+The main screen has two dropdowns. **Show** filters by origin: all servers, manually added, or one
+subscription. **Server** picks the server. **Import**, **Rename** and **Delete** act on the selected server.
+
 Popup → **+ Import**:
 * **Link / JSON:** paste one or more `vless://`/`vmess://` links, a subscription body, or Xray JSON (or open a `.json` file).
 * **QR code:** choose an image, paste one (Ctrl/⌘+V), or **Scan current tab**. Decoding is local, and URLs in QR codes are never opened.
@@ -105,8 +108,8 @@ If the tunnel fails (server down, Xray crash that doesn't recover, runtime exits
 
 ## IntelliJ / JetBrains setup
 
-Settings → Appearance & Behavior → System Settings → HTTP Proxy → Manual → **HTTP**, `127.0.0.1`, `10809` → Check
-connection. Git, Gradle, Maven, npm, Docker and terminals have their own proxy settings. See
+Settings → Appearance & Behavior → System Settings → HTTP Proxy → Manual → **HTTP**, `127.0.0.1`, `10809` →
+**Proxy authentication** with the username/password from the extension's Settings → Check connection. Git, Gradle, Maven, npm, Docker and terminals have their own proxy settings. See
 [docs/jetbrains.md](docs/jetbrains.md).
 
 ## Windows notes
