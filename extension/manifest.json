@@ -1,0 +1,37 @@
+{
+  "manifest_version": 3,
+  "name": "MProxy",
+  "version": "1.0.0",
+  "description": "MProxy: private VLESS/VMess (Xray) proxy for this browser, with a local endpoint for JetBrains IDEs. Created by Ali Mirzad.",
+  "minimum_chrome_version": "110",
+  "permissions": [
+    "proxy",
+    "storage",
+    "nativeMessaging",
+    "activeTab",
+    "privacy"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "MProxy",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'; connect-src 'self' data:; base-uri 'none'; frame-ancestors 'none'"
+  },
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAx5bLVxupbU+LPRv1qOiC2Fu+DEyhO5VFpuJdfQE+9YsW9WRE4PW/9+ZpkQLalODt14Yk5nJ6j3JBjZvkBbVOUjXVuVR0PHEQn9fRqwfKQ7XpxcWDnSOhwDAg9ags7ZBArzWkF5E3mT4MC3Kp0UKMuTrB456SizbjZNLGoVAB7ABy4y0D8c/USRSWMrNaHyTJXfjdiJJwuKBNFb8hQ7y1vYWibPmCJn2djBslvrwLYlHlAmD4AyCCPexvC0F4qcZScULe6yFM20BtEc0cmtbVVcsn3NPfCjf7ptE8d4hNQ6gakkYttcllVyBcFQpTylQniH0VF2R9n3lvbkZ6IovunwIDAQAB"
+}

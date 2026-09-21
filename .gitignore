@@ -1,0 +1,16 @@
+# Release archives are uploaded to GitHub Releases, not committed.
+dist/
+releases/
+*.zip
+
+# Local editor and operating-system files.
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Never commit private proxy profiles or local settings.
+*.env
+*.local
+config.local.json
+profiles.json

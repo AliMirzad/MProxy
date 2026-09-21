@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>MProxy</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header>
+      <button id="nav-back" class="icon" title="Back" aria-label="Back" hidden>&#8592;</button>
+      <div class="brand">
+        <img class="logo" src="icons/icon-128.png" alt="" aria-hidden="true" />
+        <div class="brand-text">
+          <h1 id="title">MProxy</h1>
+          <p id="credit" class="credit">created by <b>ali mirzad</b></p>
+        </div>
+      </div>
+      <button id="nav-settings" class="icon" title="Settings" aria-label="Settings">&#9881;</button>
+    </header>
+
+    <!-- Main -->
+    <main id="view-main">
+      <section class="card" id="status-card">
+        <div class="status-line">
+          <span id="status-dot" class="dot idle" aria-hidden="true"></span>
+          <span id="status-label" role="status" aria-live="polite">Starting…</span>
+        </div>
+        <p id="status-detail" class="detail" hidden></p>
+        <p id="status-hint" class="hint" hidden></p>
+
+        <div id="server-block">
+          <label class="field-label" for="server-filter">Show</label>
+          <select id="server-filter"></select>
+          <label class="field-label" for="server-select">Server</label>
+          <select id="server-select"></select>
+          <div id="rename-row" class="row" hidden>
+            <input id="rename-input" type="text" maxlength="100" autocomplete="off" aria-label="New server name" />
+            <button id="rename-save" class="small-btn" type="button">Save</button>
+            <button id="rename-cancel" class="small-btn" type="button">Cancel</button>
+          </div>
+          <p id="protocol-line" class="muted"></p>
+          <div class="row server-tools">
+            <button id="nav-import" type="button">+ Import</button>
+            <button id="server-rename" type="button">Rename</button>
+            <button id="sub-update" type="button" title="Update the subscription chosen in Show" hidden>Update</button>
+          </div>
+          <p id="empty-servers" class="muted" hidden>No servers yet. Click <b>+ Import</b> to add a VLESS or VMess configuration.</p>
+        </div>
+
+        <button id="primary" class="primary" type="button">Connect</button>
+        <p id="ide-line" class="muted small" hidden></p>
+      </section>
+    </main>
+
+    <!-- Import -->
+    <section id="view-import" hidden>
+      <div class="panel">
+      <div class="tabs" role="tablist">
+        <button role="tab" data-tab="link" aria-selected="true">Link / JSON</button>
+        <button role="tab" data-tab="qr" aria-selected="false">QR code</button>
+        <button role="tab" data-tab="sub" aria-selected="false">Subscription</button>
+      </div>
+
+      <div data-panel="link">
+        <label class="field-label" for="import-text">Paste vless:// or vmess:// links (one per line), a subscription body, or Xray JSON</label>
+        <textarea id="import-text" rows="7" spellcheck="false" autocomplete="off" placeholder="vless://…"></textarea>
+        <div class="row">
+          <button id="import-file-btn" type="button">Open JSON file…</button>
+          <input id="import-file" type="file" accept=".json,.txt,application/json,text/plain" hidden />
+          <button id="import-btn" class="primary small-btn" type="button">Import</button>
+        </div>
+      </div>
+
+      <div data-panel="qr" hidden>
+        <p class="muted">QR codes are decoded locally. Only VLESS/VMess configurations are accepted; links in QR codes are never opened.</p>
+        <div class="row">
+          <button id="qr-file-btn" type="button">Choose image…</button>
+          <input id="qr-file" type="file" accept="image/*" hidden />
+          <button id="qr-tab-btn" type="button">Scan current tab</button>
+        </div>
+        <p class="muted small">You can also paste an image here (Ctrl/⌘+V).</p>
+      </div>
+
+      <div data-panel="sub" hidden>
+        <label class="field-label" for="sub-name">Name</label>
+        <input id="sub-name" type="text" maxlength="100" placeholder="Work" autocomplete="off" />
+        <label class="field-label" for="sub-url">Subscription URL (HTTPS)</label>
+        <input id="sub-url" type="url" placeholder="https://…" autocomplete="off" spellcheck="false" />
+        <div class="row end">
+          <button id="sub-add-btn" class="primary small-btn" type="button">Add &amp; update</button>
+        </div>
+        <p class="muted small">Subscriptions are refreshed only when you click Update (Settings).</p>
+      </div>
+
+      <div id="import-result" class="result" hidden></div>
+      </div>
+    </section>
+
+    <!-- Settings -->
+    <section id="view-settings" hidden>
+      <div class="panel">
+      <h2>JetBrains / IDE proxy</h2>
+      <label class="check"><input id="jb-enabled" type="checkbox" /> Local proxy endpoint for IDEs</label>
+      <div class="grid2">
+        <label class="field-label" for="jb-http">HTTP port</label>
+        <input id="jb-http" type="number" min="1024" max="65535" />
+        <label class="field-label" for="jb-socks">SOCKS5 port</label>
+        <input id="jb-socks" type="number" min="1024" max="65535" />
+      </div>
+      <label class="check"><input id="jb-passthrough" type="checkbox" /> Keep the endpoint working (direct) while disconnected</label>
+      <label class="check"><input id="jb-auth" type="checkbox" /> Require a password for the IDE proxy (recommended)</label>
+      <div id="jb-cred" class="cred" hidden>
+        <p class="muted small">In the IDE: HTTP Proxy → Proxy authentication → enter these.</p>
+        <p id="jb-cred-error" class="error small" hidden></p>
+        <div class="row"><span class="cred-label">Username</span><code id="jb-user"></code><button id="jb-copy-user" class="small-btn" type="button">Copy</button></div>
+        <div class="row"><span class="cred-label">Password</span><code id="jb-pass">••••••••</code><button id="jb-show-pass" class="small-btn" type="button">Show</button><button id="jb-copy-pass" class="small-btn" type="button">Copy</button></div>
+        <div class="row end"><button id="jb-new-pass" class="small-btn" type="button">New password</button></div>
+      </div>
+      <p id="jb-status" class="muted small"></p>
+      <div class="row end"><button id="jb-save" type="button">Save</button></div>
+      </div>
+      <div class="panel">
+      <h2>Privacy</h2>
+      <label class="check"><input id="webrtc" type="checkbox" /> Block WebRTC from revealing your real IP while connected (recommended)</label>
+      </div>
+      <div class="panel">
+      <h2>Servers</h2>
+      <select id="srv-filter" aria-label="Show servers"></select>
+      <ul id="srv-list" class="list compact"></ul>
+      <p id="empty-srv" class="muted small" hidden>No servers.</p>
+      </div>
+      <div class="panel">
+      <h2>Subscriptions</h2>
+      <ul id="sub-list" class="list"></ul>
+      <p id="empty-subs" class="muted small" hidden>No subscriptions.</p>
+      <label class="check"><input id="sub-private" type="checkbox" /> Allow private-network subscription URLs (e.g. an internal company server)</label>
+      </div>
+      <div class="panel">
+      <h2>About &amp; diagnostics</h2>
+      <p id="versions" class="muted small"></p>
+      <label class="check"><input id="debug-log" type="checkbox" /> Verbose diagnostics log (for troubleshooting)</label>
+      <div class="row">
+        <button id="copy-diag" type="button">Copy diagnostics</button>
+      </div>
+      </div>
+      <div class="panel">
+      <h2>Danger zone</h2>
+      <div class="row"><button id="reset-all" class="danger" type="button">Remove all servers</button></div>
+      </div>
+      <div id="settings-result" class="result" hidden></div>
+    </section>
+
+    <div id="toast" class="toast" role="alert" hidden></div>
+    <script src="popup.js" type="module"></script>
+  </body>
+</html>

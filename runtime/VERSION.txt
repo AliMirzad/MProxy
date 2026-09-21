@@ -1,0 +1,4 @@
+Private Proxy runtime 1.0.0
+protocol 2
+xray v26.3.27
+extension id pmagpgfembejahekgbdifepphmaigngl
