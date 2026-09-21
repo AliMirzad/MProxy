@@ -3,7 +3,6 @@ name = "private-proxy-host"
 version = "1.0.0"
 edition = "2021"
 description = "Native messaging host for the Private Proxy browser extension (manages Xray-core)"
-license = "MIT"
 publish = false
 
 [[bin]]

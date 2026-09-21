@@ -491,6 +491,12 @@ log:
     assert!(st.get("proxy").is_none());
     assert!(!port_open(port), "browser proxy port must be closed after disconnect");
     assert_eq!(st["jetbrains"]["mode"], "direct");
+    // Requests aimed at our own inbound are refused instead of looping.
+    let t0 = Instant::now();
+    let r = get_via_http_proxy(o.jb_http, "127.0.0.1", o.jb_http);
+    assert!(r.map(|l| !l.contains("200")).unwrap_or(true));
+    assert!(t0.elapsed() < Duration::from_secs(5), "self-loop must fail fast");
+    assert!(port_open(o.jb_http), "endpoint survives a self-loop attempt");
     // Direct passthrough: an IP literal target works, and no tunnel is involved.
     assert_eq!(get_via_http_proxy(o.jb_http, "127.0.0.1", e.target.port).unwrap(), "HTTP/1.1 204 No Content");
     // probe.test is only resolvable on the server, so in direct mode it must fail: proves the tunnel is really off.

@@ -158,7 +158,13 @@ fn cli_install(args: &[String]) -> ExitCode {
         .or_else(|| std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_path_buf())))
         .unwrap_or_default();
     let target_dir = flag_value(args, "--target").pop().map(Into::into).unwrap_or_else(paths::default_install_dir);
-    let opts = install::InstallOptions { source_dir, target_dir, extension_ids: ids, all_browsers: args.iter().any(|a| a == "--all-browsers") };
+    let opts = install::InstallOptions {
+        source_dir,
+        target_dir,
+        extension_ids: ids,
+        all_browsers: args.iter().any(|a| a == "--all-browsers"),
+        register_only: args.iter().any(|a| a == "--register-only"),
+    };
     let code = match install::install(&opts) {
         Ok(lines) => {
             for l in lines {

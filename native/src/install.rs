@@ -62,6 +62,9 @@ pub struct InstallOptions {
     pub extension_ids: Vec<String>,
     /// macOS: also register for browsers whose profile directory does not exist yet.
     pub all_browsers: bool,
+    /// Only write native messaging registration for an already-installed runtime in
+    /// `target_dir` (used by the macOS .pkg postinstall for the logged-in user).
+    pub register_only: bool,
 }
 
 /// Copies `src` over `dst`. On Windows a running executable cannot be overwritten but can be
@@ -77,6 +80,10 @@ fn replace_file(src: &Path, dst: &Path) -> Result<(), String> {
         }
     }
     fs::copy(src, dst).map_err(|e| format!("cannot copy {} -> {}: {e}", src.display(), dst.display()))?;
+    // CopyFileEx copies alternate data streams; drop the downloaded-file mark (Zone.Identifier)
+    // so the installed copy is not treated as an untrusted download.
+    #[cfg(windows)]
+    let _ = fs::remove_file(format!("{}:Zone.Identifier", dst.display()));
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -105,6 +112,19 @@ pub fn install(o: &InstallOptions) -> Result<Vec<String>, String> {
         return Err("invalid extension id".into());
     }
     let mut log = Vec::new();
+    if o.register_only {
+        let host = o.target_dir.join(host_exe_name());
+        if !host.is_file() || find_xray(&o.target_dir).is_none() {
+            return Err(format!("no installed runtime in {}", o.target_dir.display()));
+        }
+        let manifest = manifest_json(&host, &o.extension_ids);
+        let manifest_path = o.target_dir.join(format!("{HOST_NAME}.json"));
+        if fs::write(&manifest_path, &manifest).is_err() {
+            log.push("(runtime directory is read-only; manifest written per browser only)".into());
+        }
+        platform::register(o, &manifest_path, &manifest, &mut log)?;
+        return Ok(log);
+    }
     let xray_src = find_xray(&o.source_dir).ok_or_else(|| format!("Xray binary not found next to the installer in {}", o.source_dir.display()))?;
     let xray_dir = o.target_dir.join("xray");
     fs::create_dir_all(&xray_dir).map_err(|e| format!("cannot create {}: {e}", xray_dir.display()))?;

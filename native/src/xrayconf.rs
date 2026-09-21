@@ -74,12 +74,34 @@ fn inbounds(plan: &RuntimePlan) -> Vec<Value> {
     v
 }
 
+/// Ports of our own inbounds, as an Xray port list ("a,b,c").
+fn own_ports(plan: &RuntimePlan) -> Option<String> {
+    let ports: Vec<String> = [plan.browser_port, plan.jetbrains.socks, plan.jetbrains.http].into_iter().flatten().map(|p| p.to_string()).collect();
+    (!ports.is_empty()).then(|| ports.join(","))
+}
+
+/// Blocks requests aimed back at our own inbounds (e.g. a web page or local program sending
+/// `GET http://127.0.0.1:10809/` to the HTTP inbound). Without this, Xray would proxy the
+/// request to itself recursively until it runs out of connections.
+fn self_loop_rules(plan: &RuntimePlan) -> Vec<Value> {
+    match own_ports(plan) {
+        None => vec![],
+        Some(ports) => vec![
+            json!({ "type": "field", "ip": ["127.0.0.0/8", "::1/128"], "port": ports, "outboundTag": "block" }),
+            json!({ "type": "field", "domain": ["full:localhost"], "port": ports, "outboundTag": "block" }),
+        ],
+    }
+}
+
 fn log(plan: &RuntimePlan) -> Value {
     json!({ "loglevel": plan.log_level, "access": "none", "dnsLog": false })
 }
 
 /// Tunnel mode: every inbound goes to the selected server, except private IP literals.
 pub fn tunnel_config(meta: &ServerMeta, secrets: &ServerSecrets, plan: &RuntimePlan) -> Value {
+    let mut rules = self_loop_rules(plan);
+    rules.push(json!({ "type": "field", "domain": ["full:localhost"], "outboundTag": "direct" }));
+    rules.push(json!({ "type": "field", "ip": PRIVATE_CIDRS, "outboundTag": "direct" }));
     json!({
         "log": log(plan),
         "inbounds": inbounds(plan),
@@ -88,13 +110,7 @@ pub fn tunnel_config(meta: &ServerMeta, secrets: &ServerSecrets, plan: &RuntimeP
             { "tag": "direct", "protocol": "freedom", "settings": {} },
             { "tag": "block", "protocol": "blackhole", "settings": {} }
         ],
-        "routing": {
-            "domainStrategy": "AsIs",
-            "rules": [
-                { "type": "field", "domain": ["full:localhost"], "outboundTag": "direct" },
-                { "type": "field", "ip": PRIVATE_CIDRS, "outboundTag": "direct" }
-            ]
-        }
+        "routing": { "domainStrategy": "AsIs", "rules": rules }
     })
 }
 
@@ -103,7 +119,11 @@ pub fn passthrough_config(plan: &RuntimePlan) -> Value {
     json!({
         "log": log(plan),
         "inbounds": inbounds(plan),
-        "outbounds": [ { "tag": "direct", "protocol": "freedom", "settings": {} } ]
+        "outbounds": [
+            { "tag": "direct", "protocol": "freedom", "settings": {} },
+            { "tag": "block", "protocol": "blackhole", "settings": {} }
+        ],
+        "routing": { "domainStrategy": "AsIs", "rules": self_loop_rules(plan) }
     })
 }
 
@@ -252,6 +272,9 @@ mod tests {
         assert_eq!(cfg["log"]["access"], "none");
         assert_eq!(cfg["routing"]["domainStrategy"], "AsIs");
         assert!(cfg.get("dns").is_none());
+        // self-loop protection comes first and covers all our inbound ports
+        assert_eq!(cfg["routing"]["rules"][0]["outboundTag"], "block");
+        assert_eq!(cfg["routing"]["rules"][0]["port"], "50000,10808,10809");
     }
 
     #[test]
@@ -259,8 +282,10 @@ mod tests {
         let mut pl = plan();
         pl.browser_port = None;
         let cfg = passthrough_config(&pl);
-        assert_eq!(cfg["outbounds"].as_array().unwrap().len(), 1);
         assert_eq!(cfg["outbounds"][0]["protocol"], "freedom");
+        assert!(cfg["outbounds"].as_array().unwrap().iter().all(|o| o["protocol"] == "freedom" || o["protocol"] == "blackhole"));
+        assert_eq!(cfg["routing"]["rules"][0]["outboundTag"], "block");
+        assert_eq!(cfg["routing"]["rules"][0]["port"], "10808,10809");
         assert_eq!(cfg["inbounds"].as_array().unwrap().len(), 2);
         assert!(all_listen_loopback(&cfg));
     }
