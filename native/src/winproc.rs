@@ -79,13 +79,29 @@ pub struct ChildProc {
 #[derive(Clone, Copy, Debug)]
 pub struct Restrictions {
     pub low_integrity: bool,
+    /// Restricted token: the user's SID is deny-only and all privileges except
+    /// SeChangeNotify are removed. Files and registry keys that grant access only to the user
+    /// (the whole profile: documents, browser profiles, credentials) become inaccessible.
+    pub deny_user_sid: bool,
     pub mitigations: bool,
     pub no_child_processes: bool,
     pub job_limits: bool,
 }
 
 impl Restrictions {
-    pub const ALL: Restrictions = Restrictions { low_integrity: true, mitigations: true, no_child_processes: true, job_limits: true };
+    pub const ALL: Restrictions = Restrictions { low_integrity: true, deny_user_sid: true, mitigations: true, no_child_processes: true, job_limits: true };
+    pub const NONE: Restrictions = Restrictions { low_integrity: false, deny_user_sid: false, mitigations: false, no_child_processes: false, job_limits: false };
+}
+
+/// Whether the last launch had the (best-effort) creation-time mitigation policies applied.
+/// Older Windows 10 builds reject some of them; the mandatory restrictions do not depend on it.
+pub static MITIGATIONS_APPLIED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+const SE_GROUP_USE_FOR_DENY_ONLY_: u32 = 0x10;
+const DISABLE_MAX_PRIVILEGE_: u32 = 0x1;
+
+fn security_check_failed(what: &str) -> io::Error {
+    io::Error::other(format!("runtime security check failed: {what}"))
 }
 
 #[derive(Clone, Copy)]
@@ -124,7 +140,40 @@ fn nul() -> io::Result<Handle> {
     Ok(Handle(h))
 }
 
-fn low_integrity_token() -> io::Result<Handle> {
+/// Token buffer (TOKEN_USER, TOKEN_MANDATORY_LABEL, TOKEN_PRIVILEGES, ...) of `class`.
+fn token_info(tok: HANDLE, class: TOKEN_INFORMATION_CLASS) -> Option<Vec<u8>> {
+    unsafe {
+        let mut len = 0u32;
+        GetTokenInformation(tok, class, std::ptr::null_mut(), 0, &mut len);
+        if len == 0 {
+            return None;
+        }
+        let mut buf = vec![0u8; len as usize];
+        (GetTokenInformation(tok, class, buf.as_mut_ptr() as *mut _, len, &mut len) != 0).then_some(buf)
+    }
+}
+
+fn integrity_rid(tok: HANDLE) -> Option<u32> {
+    let buf = token_info(tok, TokenIntegrityLevel)?;
+    unsafe {
+        let label = &*(buf.as_ptr() as *const TOKEN_MANDATORY_LABEL);
+        let count = *GetSidSubAuthorityCount(label.Label.Sid);
+        Some(*GetSidSubAuthority(label.Label.Sid, (count - 1) as u32))
+    }
+}
+
+fn user_sid_deny_only(tok: HANDLE) -> Option<bool> {
+    let buf = token_info(tok, TokenUser)?;
+    let user = unsafe { &*(buf.as_ptr() as *const TOKEN_USER) };
+    Some(user.User.Attributes & SE_GROUP_USE_FOR_DENY_ONLY_ != 0)
+}
+
+fn privilege_count(tok: HANDLE) -> Option<u32> {
+    let buf = token_info(tok, TokenPrivileges)?;
+    Some(unsafe { (*(buf.as_ptr() as *const TOKEN_PRIVILEGES)).PrivilegeCount })
+}
+
+fn low_integrity_token(deny_user_sid: bool) -> io::Result<Handle> {
     unsafe {
         let mut tok: HANDLE = std::ptr::null_mut();
         if OpenProcessToken(GetCurrentProcess(), TOKEN_DUPLICATE | TOKEN_QUERY | TOKEN_ASSIGN_PRIMARY | TOKEN_ADJUST_DEFAULT, &mut tok) == 0 {
@@ -132,7 +181,14 @@ fn low_integrity_token() -> io::Result<Handle> {
         }
         let tok = Handle(tok);
         let mut dup: HANDLE = std::ptr::null_mut();
-        if DuplicateTokenEx(
+        if deny_user_sid {
+            let user = token_info(tok.0, TokenUser).ok_or_else(last)?;
+            let user = &*(user.as_ptr() as *const TOKEN_USER);
+            let disable = [SID_AND_ATTRIBUTES { Sid: user.User.Sid, Attributes: 0 }];
+            if CreateRestrictedToken(tok.0, DISABLE_MAX_PRIVILEGE_, 1, disable.as_ptr(), 0, std::ptr::null(), 0, std::ptr::null(), &mut dup) == 0 {
+                return Err(last());
+            }
+        } else if DuplicateTokenEx(
             tok.0,
             TOKEN_QUERY | TOKEN_DUPLICATE | TOKEN_ASSIGN_PRIMARY | TOKEN_ADJUST_DEFAULT,
             std::ptr::null(),
@@ -225,11 +281,19 @@ impl ChildProc {
 
     pub fn spawn_with(exe: &Path, args: &[&str], cwd: &Path, io_: Stdio, r: Restrictions) -> io::Result<ChildProc> {
         match Self::spawn_inner(exe, args, cwd, io_, r) {
-            Err(e) if e.raw_os_error() == Some(ERROR_INVALID_PARAMETER as i32) || e.raw_os_error() == Some(ERROR_NOT_SUPPORTED as i32) => {
-                crate::log::warn("process mitigation attributes not supported by this Windows build; launching Xray without them");
-                Self::spawn_inner(exe, args, cwd, io_, Restrictions { mitigations: false, no_child_processes: false, ..r })
+            // BEST EFFORT only: the creation-time mitigation/child policies. Everything MANDATORY
+            // (token, job, handle list, environment) is still applied and verified in the retry.
+            Err(e) if r.mitigations && (e.raw_os_error() == Some(ERROR_INVALID_PARAMETER as i32) || e.raw_os_error() == Some(ERROR_NOT_SUPPORTED as i32)) => {
+                crate::log::warn("process mitigation attributes not supported by this Windows build; launching Xray with the mandatory restrictions only");
+                let c = Self::spawn_inner(exe, args, cwd, io_, Restrictions { mitigations: false, no_child_processes: false, ..r });
+                MITIGATIONS_APPLIED.store(false, std::sync::atomic::Ordering::SeqCst);
+                c
             }
-            r => r,
+            Ok(c) => {
+                MITIGATIONS_APPLIED.store(r.mitigations, std::sync::atomic::Ordering::SeqCst);
+                Ok(c)
+            }
+            e => e,
         }
     }
 
@@ -237,7 +301,7 @@ impl ChildProc {
         let (stdin_parent, stdin_child) = if io_.stdin { let (p, c) = pipe(true)?; (Some(p), c) } else { (None, nul()?) };
         let (stdout_parent, stdout_child) = if io_.stdout { let (p, c) = pipe(false)?; (Some(p), c) } else { (None, nul()?) };
         let (stderr_parent, stderr_child) = if io_.stderr { let (p, c) = pipe(false)?; (Some(p), c) } else { (None, nul()?) };
-        let token = if r.low_integrity { Some(low_integrity_token()?) } else { None };
+        let token = if r.low_integrity || r.deny_user_sid { Some(low_integrity_token(r.deny_user_sid)?) } else { None };
         let job = restricted_job(r.job_limits)?;
 
         let inherit = [stdin_child.0, stdout_child.0, stderr_child.0];
@@ -328,6 +392,12 @@ impl ChildProc {
                 TerminateProcess(process.0, 1);
                 return Err(e);
             }
+            // Fail closed: verify the state of the created (still suspended) process before a single
+            // instruction of it runs. Any mismatch terminates it.
+            if let Err(e) = verify_suspended(process.0, job.0, r) {
+                TerminateProcess(process.0, 1);
+                return Err(e);
+            }
             ResumeThread(thread.0);
             drop(thread);
             // Child ends are owned by the child now; close ours so EOF propagates.
@@ -385,6 +455,48 @@ impl ChildProc {
     }
 }
 
+/// MANDATORY checks on the created process, read back from the OS (not assumed from the API calls).
+fn verify_suspended(process: HANDLE, job: HANDLE, r: Restrictions) -> io::Result<()> {
+    // Debug test mode only: simulate a failed protection to prove that the launch is aborted.
+    if crate::test_flag("PRIVATE_PROXY_TEST_BREAK_ISOLATION") {
+        return Err(security_check_failed("isolation deliberately broken by the test hook"));
+    }
+    unsafe {
+        let mut tok: HANDLE = std::ptr::null_mut();
+        if OpenProcessToken(process, TOKEN_QUERY, &mut tok) == 0 {
+            return Err(security_check_failed("cannot inspect the Xray process token"));
+        }
+        let tok = Handle(tok);
+        if r.low_integrity && integrity_rid(tok.0) != Some(0x1000) {
+            return Err(security_check_failed("Xray is not running at Low integrity"));
+        }
+        if r.deny_user_sid {
+            if user_sid_deny_only(tok.0) != Some(true) {
+                return Err(security_check_failed("the Xray token still grants the user's access rights"));
+            }
+            if privilege_count(tok.0).is_none_or(|n| n > 1) {
+                return Err(security_check_failed("the Xray token still holds privileges"));
+            }
+        }
+        let mut in_job = 0;
+        if IsProcessInJob(process, job, &mut in_job) == 0 || in_job == 0 {
+            return Err(security_check_failed("Xray is not inside its job object"));
+        }
+        let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
+        if QueryInformationJobObject(job, JobObjectExtendedLimitInformation, &mut info as *mut _ as *mut _, std::mem::size_of_val(&info) as u32, std::ptr::null_mut()) == 0 {
+            return Err(security_check_failed("cannot read the job limits"));
+        }
+        let flags = info.BasicLimitInformation.LimitFlags;
+        if flags & JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE == 0 {
+            return Err(security_check_failed("the job does not kill Xray with the helper"));
+        }
+        if r.job_limits && (flags & JOB_OBJECT_LIMIT_ACTIVE_PROCESS == 0 || info.BasicLimitInformation.ActiveProcessLimit != 1) {
+            return Err(security_check_failed("the job does not prevent Xray from starting processes"));
+        }
+    }
+    Ok(())
+}
+
 /// What the OS reports about a running process's isolation (for diagnostics and tests).
 #[derive(Debug, Clone, serde::Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -394,6 +506,12 @@ pub struct Isolation {
     pub child_processes_blocked: bool,
     pub extension_points_disabled: bool,
     pub remote_images_blocked: bool,
+    /// The user's SID is deny-only in Xray's token (no access to user-only files/keys).
+    pub user_sid_deny_only: bool,
+    pub privileges: u32,
+    pub in_job: bool,
+    /// BEST EFFORT creation-time mitigations applied at the last launch.
+    pub mitigations_applied: bool,
 }
 
 pub fn isolation_of(pid: u32) -> Option<Isolation> {
@@ -416,6 +534,10 @@ pub fn isolation_of(pid: u32) -> Option<Isolation> {
         let label = &*(buf.as_ptr() as *const TOKEN_MANDATORY_LABEL);
         let count = *GetSidSubAuthorityCount(label.Label.Sid);
         let rid = *GetSidSubAuthority(label.Label.Sid, (count - 1) as u32);
+        let deny_only = user_sid_deny_only(tok.0).unwrap_or(false);
+        let privileges = privilege_count(tok.0).unwrap_or(u32::MAX);
+        let mut in_job = 0;
+        IsProcessInJob(p.0, std::ptr::null_mut(), &mut in_job);
         let integrity = match rid {
             0x0000 => "untrusted",
             0x1000 => "low",
@@ -438,6 +560,10 @@ pub fn isolation_of(pid: u32) -> Option<Isolation> {
             child_processes_blocked: flags(ProcessChildProcessPolicy) & 1 != 0,
             extension_points_disabled: flags(ProcessExtensionPointDisablePolicy) & 1 != 0,
             remote_images_blocked: flags(ProcessImageLoadPolicy) & 1 != 0,
+            user_sid_deny_only: deny_only,
+            privileges,
+            in_job: in_job != 0,
+            mitigations_applied: MITIGATIONS_APPLIED.load(std::sync::atomic::Ordering::SeqCst),
         })
     }
 }
@@ -456,10 +582,11 @@ mod tests {
             eprintln!("skipped: {} missing", xray.display());
             return;
         }
-        let none = Restrictions { low_integrity: false, mitigations: false, no_child_processes: false, job_limits: false };
+        let none = Restrictions::NONE;
         let cases = [
             ("none", none),
             ("low_integrity", Restrictions { low_integrity: true, ..none }),
+            ("deny_user_sid", Restrictions { deny_user_sid: true, ..none }),
             ("mitigations", Restrictions { mitigations: true, ..none }),
             ("no_child_processes", Restrictions { no_child_processes: true, ..none }),
             ("job_limits", Restrictions { job_limits: true, ..none }),

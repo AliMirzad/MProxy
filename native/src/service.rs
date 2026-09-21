@@ -129,6 +129,13 @@ fn store_err(e: StoreError) -> ApiError {
     }
 }
 
+/// User-facing message for a failed MANDATORY protection (see docs/security-gate.md).
+fn security_failure(err: &str) -> Option<String> {
+    let i = err.find("runtime security check failed")?;
+    let detail = err[i + "runtime security check failed".len()..].trim_start_matches(':').trim();
+    Some(format!("Runtime security check failed: {}. The connection was not started.", crate::validate::truncate(detail, 200)))
+}
+
 fn valid_id(id: &str) -> Result<(), ApiError> {
     if uuid::Uuid::parse_str(id).is_ok() {
         Ok(())
@@ -688,6 +695,11 @@ impl Service {
             self.jetbrains.issue = Some("Xray is not installed".into());
             return;
         };
+        if let Err(e) = crate::harden::verify_private_dir(self.store.dir()) {
+            self.jetbrains.issue = Some(format!("Runtime security check failed: {e}"));
+            log::error(format!("IDE endpoint not started: {e}"));
+            return;
+        }
         let jb = self.jetbrains_plan(&s);
         let Some(probe_port) = jb.http.or(jb.socks) else { return };
         let ide_auth = match self.ide_auth(&s) {
@@ -719,7 +731,7 @@ impl Service {
                 }
             }
             Err(e) => {
-                self.jetbrains.issue = Some("The local IDE proxy could not be started".into());
+                self.jetbrains.issue = Some(security_failure(&e).unwrap_or_else(|| "The local IDE proxy could not be started".into()));
                 log::warn(format!("passthrough spawn failed: {e}"));
             }
         }
@@ -769,6 +781,9 @@ impl Service {
         if let Err(e) = xray::verify(&xray_path) {
             return self.fail(ErrorCode::XrayFailed, format!("Xray integrity check failed: {e}"), Some(sid));
         }
+        if let Err(e) = crate::harden::verify_private_dir(self.store.dir()) {
+            return self.fail(ErrorCode::XrayFailed, format!("Runtime security check failed: {e}. The connection was not started."), Some(sid));
+        }
         let s = self.settings();
         let mut jb = self.jetbrains_plan(&s);
         let ide_auth = match self.ide_auth(&s) {
@@ -792,6 +807,9 @@ impl Service {
             let cfg = serde_json::to_vec(&xrayconf::tunnel_config(meta, secrets, &plan)).unwrap_or_default();
             if try_no == 0 {
                 if let Err(reason) = xray::test_config(&xray_path, &cfg) {
+                    if let Some(m) = security_failure(&reason) {
+                        return self.fail(ErrorCode::XrayFailed, m, Some(sid));
+                    }
                     return self.fail(ErrorCode::XrayConfigRejected, format!("Xray rejected this server's configuration: {reason}"), Some(sid));
                 }
             }
@@ -823,7 +841,13 @@ impl Service {
             }
         }
         let detail = last_err.rsplit(" > ").next().unwrap_or("").trim().to_string();
-        let msg = if detail.is_empty() { "Xray failed to start".to_string() } else { format!("Xray failed to start: {}", crate::validate::truncate(&detail, 200)) };
+        let msg = if let Some(m) = security_failure(&last_err) {
+            m
+        } else if detail.is_empty() {
+            "Xray failed to start".to_string()
+        } else {
+            format!("Xray failed to start: {}", crate::validate::truncate(&detail, 200))
+        };
         self.fail(ErrorCode::XrayFailed, msg, Some(sid));
     }
 

@@ -212,6 +212,7 @@ struct HostOpts {
     jb_http: u16,
     /// Test servers listen on 127.0.0.1; release builds refuse loopback destinations.
     allow_loopback: bool,
+    extra_env: Vec<(&'static str, &'static str)>,
 }
 
 impl Host {
@@ -233,6 +234,9 @@ impl Host {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit());
+        for (k, v) in &o.extra_env {
+            cmd.env(k, v);
+        }
         match &o.xray {
             Some(x) => cmd.env("PRIVATE_PROXY_XRAY", x),
             None => cmd.env("PRIVATE_PROXY_XRAY", data.path().join("does-not-exist")),
@@ -439,7 +443,7 @@ fn links(e: &Env) -> Vec<(&'static str, String)> {
 }
 
 fn opts(e: &Env) -> HostOpts {
-    HostOpts { xray: Some(e.xray.clone()), probe_port: e.target.port, jb_socks: free_port(), jb_http: free_port(), allow_loopback: true }
+    HostOpts { xray: Some(e.xray.clone()), probe_port: e.target.port, jb_socks: free_port(), jb_http: free_port(), allow_loopback: true, extra_env: vec![] }
 }
 
 // ================================================================ tests
@@ -634,7 +638,7 @@ fn failures_and_idempotency() {
 
 #[test]
 fn xray_missing_is_reported() {
-    let o = HostOpts { xray: None, probe_port: 1, jb_socks: free_port(), jb_http: free_port(), allow_loopback: true };
+    let o = HostOpts { xray: None, probe_port: 1, jb_socks: free_port(), jb_http: free_port(), allow_loopback: true, extra_env: vec![] };
     let mut h = Host::start(&o);
     let hello = h.ok("hello", json!({"protocolVersion": 2, "extensionVersion": "test"}));
     assert_eq!(hello["xrayAvailable"], false);
@@ -647,7 +651,7 @@ fn xray_missing_is_reported() {
 #[test]
 fn rejected_by_xray_validation() {
     let _ = require_xray!();
-    let o = HostOpts { xray: xray_path(), probe_port: 1, jb_socks: free_port(), jb_http: free_port(), allow_loopback: true };
+    let o = HostOpts { xray: xray_path(), probe_port: 1, jb_socks: free_port(), jb_http: free_port(), allow_loopback: true, extra_env: vec![] };
     let mut h = Host::start(&o);
     // Structurally valid for our parser but rejected by Xray's own validation (-test):
     // a VLESS Encryption string with a bogus key.
@@ -688,7 +692,7 @@ fn subscriptions_add_update_fail() {
     let l3 = format!("vless://{TEST_UUID}@c.example.com:443?security=tls#C");
     *body.lock().unwrap() = base64::engine::general_purpose::STANDARD.encode(format!("{l1}\n{l2}\nss://x@y:1#ss\nvless://bad"));
 
-    let o = HostOpts { xray: xray_path(), probe_port: 1, jb_socks: free_port(), jb_http: free_port(), allow_loopback: true };
+    let o = HostOpts { xray: xray_path(), probe_port: 1, jb_socks: free_port(), jb_http: free_port(), allow_loopback: true, extra_env: vec![] };
     let mut h = Host::start(&o);
     let url = format!("http://127.0.0.1:{sport}/sub?token=SECRET123");
     let r = h.ok("addSubscription", json!({"name": "Work", "url": url}));
@@ -808,6 +812,10 @@ fn xray_isolation_and_listeners() {
         assert_eq!(iso["childProcessesBlocked"], true, "{d}");
         assert_eq!(iso["extensionPointsDisabled"], true, "{d}");
         assert_eq!(iso["remoteImagesBlocked"], true, "{d}");
+        assert_eq!(iso["userSidDenyOnly"], true, "{d}");
+        assert_eq!(iso["privileges"], 0, "{d}");
+        assert_eq!(iso["inJob"], true, "{d}");
+        assert_eq!(iso["mitigationsApplied"], true, "{d}");
         // The data directory is private and carries the no-read-up label.
         let prot = d["dataDirProtection"].as_str().unwrap();
         assert!(prot.starts_with("D:P") && !prot.contains(";;;WD)") && !prot.contains(";;;BU)") && !prot.contains(";;;AU)"), "{prot}");
@@ -825,7 +833,7 @@ fn xray_isolation_and_listeners() {
             let _ = c.stdout.take().unwrap().read_to_end(&mut out);
             (c.wait().unwrap(), out.len())
         };
-        let low = Restrictions { low_integrity: true, mitigations: false, no_child_processes: false, job_limits: false };
+        let low = Restrictions { low_integrity: true, ..Restrictions::NONE };
         let medium = Restrictions { low_integrity: false, ..low };
         let target = secrets.to_string_lossy().to_string();
         let (code_med, bytes_med) = run(medium, &["/C", "type", &target]);
@@ -842,7 +850,7 @@ fn xray_isolation_and_listeners() {
 
 #[test]
 fn hostile_native_messages() {
-    let o = HostOpts { xray: xray_path(), probe_port: 1, jb_socks: free_port(), jb_http: free_port(), allow_loopback: true };
+    let o = HostOpts { xray: xray_path(), probe_port: 1, jb_socks: free_port(), jb_http: free_port(), allow_loopback: true, extra_env: vec![] };
     let mut h = Host::start(&o);
     h.ok("hello", json!({"protocolVersion": 2, "extensionVersion": "test"}));
     // No generic OS operations exist.
@@ -973,7 +981,7 @@ fn tampered_xray_is_never_executed() {
     std::fs::create_dir_all(other.parent().unwrap()).unwrap();
     std::fs::copy(if cfg!(windows) { PathBuf::from(std::env::var("SystemRoot").unwrap()).join("System32").join("cmd.exe") } else { PathBuf::from("/bin/sh") }, &other).unwrap();
     for bin in [patched, other] {
-        let o = HostOpts { xray: Some(bin.clone()), probe_port: 1, jb_socks: free_port(), jb_http: free_port(), allow_loopback: true };
+        let o = HostOpts { xray: Some(bin.clone()), probe_port: 1, jb_socks: free_port(), jb_http: free_port(), allow_loopback: true, extra_env: vec![] };
         let mut h = Host::start(&o);
         let hello = h.ok("hello", json!({"protocolVersion": 2, "extensionVersion": "test"}));
         assert_eq!(hello["xrayAvailable"], false, "{}", bin.display());
@@ -1026,7 +1034,7 @@ fn subscription_ssrf_is_blocked() {
         }
     });
     // Release policy (no loopback allowance).
-    let o = HostOpts { xray: xray_path(), probe_port: 1, jb_socks: free_port(), jb_http: free_port(), allow_loopback: false };
+    let o = HostOpts { xray: xray_path(), probe_port: 1, jb_socks: free_port(), jb_http: free_port(), allow_loopback: false, extra_env: vec![] };
     let mut h = Host::start(&o);
     for url in [
         format!("http://127.0.0.1:{port}/sub"),
@@ -1083,7 +1091,7 @@ fn malicious_subscription_bodies() {
             let _ = s.write_all(&b);
         }
     });
-    let o = HostOpts { xray: xray_path(), probe_port: 1, jb_socks: free_port(), jb_http: free_port(), allow_loopback: true };
+    let o = HostOpts { xray: xray_path(), probe_port: 1, jb_socks: free_port(), jb_http: free_port(), allow_loopback: true, extra_env: vec![] };
     let mut h = Host::start(&o);
     let url = format!("http://127.0.0.1:{sport}/sub");
     let ob = |extra: &str| {
@@ -1262,4 +1270,162 @@ fn ports_ready(port: u16) -> bool {
         std::thread::sleep(Duration::from_millis(100));
     }
     false
+}
+
+/// Runs the `sandbox_probe` test fixture under exactly the restrictions Xray gets and asserts,
+/// from inside the process, what it can and cannot do. A control run without restrictions proves
+/// the probe detects each capability (so a PASS is not an artefact of the probe).
+#[cfg(windows)]
+#[test]
+fn xray_sandbox_probe() {
+    use ppcore::winproc::{ChildProc, Restrictions, Stdio as PStdio};
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
+    use windows_sys::Win32::System::Threading::CreateEventW;
+
+    let probe = std::env::current_exe().unwrap().parent().unwrap().parent().unwrap().join("examples").join("sandbox_probe.exe");
+    if !probe.is_file() {
+        eprintln!("skipped: {} not built", probe.display());
+        return;
+    }
+    let home = PathBuf::from(std::env::var("USERPROFILE").unwrap());
+    let tag = std::process::id();
+    // A "company document" in the user profile, a protected data dir like ours, user temp.
+    let doc = home.join(format!("pp-probe-document-{tag}.txt"));
+    std::fs::write(&doc, b"confidential").unwrap();
+    let data = tempfile::tempdir().unwrap();
+    ppcore::harden::restrict_dir(data.path()).unwrap();
+    let secret = data.path().join("secrets.bin");
+    std::fs::write(&secret, b"secret").unwrap();
+    let tmp_file = std::env::temp_dir().join(format!("pp-probe-temp-{tag}.txt"));
+    std::fs::write(&tmp_file, b"temp").unwrap();
+    let local_low = home.join("AppData").join("LocalLow").join(format!("pp-probe-{tag}.txt"));
+    let hosts = PathBuf::from(std::env::var("SystemRoot").unwrap()).join("System32").join("drivers").join("etc").join("hosts");
+    let install_dir = probe.parent().unwrap().join(format!("pp-probe-install-{tag}.txt"));
+
+    // An inheritable handle in the parent that the child must NOT receive.
+    let sa = SECURITY_ATTRIBUTES { nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32, lpSecurityDescriptor: std::ptr::null_mut(), bInheritHandle: 1 };
+    let event: HANDLE = unsafe { CreateEventW(&sa, 1, 0, std::ptr::null()) };
+    assert!(!event.is_null());
+
+    let s = |p: &Path| p.to_string_lossy().to_string();
+    let args: Vec<String> = vec![
+        "--handle".into(), (event as usize).to_string(),
+        "--read".into(), s(&doc), "--read".into(), s(&secret), "--read".into(), s(&tmp_file), "--read".into(), s(&hosts),
+        "--write".into(), s(&home.join(format!("pp-probe-write-{tag}.txt"))),
+        "--write".into(), s(&std::env::temp_dir().join(format!("pp-probe-write-{tag}.txt"))),
+        "--write".into(), s(&local_low),
+        "--write".into(), s(&install_dir),
+        "--write".into(), s(&data.path().join("planted.txt")),
+        "--reg-write".into(),
+    ];
+    let argv: Vec<&str> = args.iter().map(String::as_str).collect();
+    let run = |r: Restrictions| -> Value {
+        let mut c = ChildProc::spawn_with(&probe, &argv, probe.parent().unwrap(), PStdio { stdin: false, stdout: true, stderr: true }, r).unwrap();
+        let mut out = String::new();
+        c.stdout.take().unwrap().read_to_string(&mut out).unwrap();
+        let mut err = String::new();
+        c.stderr.take().unwrap().read_to_string(&mut err).unwrap();
+        let code = c.wait().unwrap();
+        serde_json::from_str(out.trim()).unwrap_or_else(|e| panic!("probe ({r:?}) exit {code:#x}, stdout {out:?}, stderr {err:?}: {e}"))
+    };
+    let restricted = run(Restrictions::ALL);
+    let control = run(Restrictions::NONE);
+    unsafe { CloseHandle(event) };
+    let _ = std::fs::remove_file(&doc);
+    let _ = std::fs::remove_file(&tmp_file);
+    eprintln!("RESTRICTED: {restricted}");
+    eprintln!("CONTROL:    {control}");
+
+    // Control: the probe can observe every capability when unrestricted.
+    assert_eq!(control["reads"][s(&doc)], true, "control must read the document");
+    assert_eq!(control["canStartProcess"], true);
+    assert_eq!(control["reads"][s(&secret)], true);
+    assert_eq!(control["canWriteHkcuSoftware"], true);
+    assert_eq!(control["integrityRid"], "0x2000");
+    // The minimal environment and the explicit handle list are applied by the launcher
+    // unconditionally (not part of Restrictions), so the control shows them restricted too.
+    assert_eq!(control["env"], json!(["SystemRoot"]));
+
+    let r = &restricted;
+    // Token
+    assert_eq!(r["integrityRid"], "0x1000", "Low integrity");
+    assert_eq!(r["userSidDenyOnly"], true, "user SID deny-only");
+    assert_eq!(r["elevated"], false);
+    for p in r["privileges"].as_array().unwrap() {
+        assert_eq!(p, "SeChangeNotifyPrivilege", "unexpected privilege {p}");
+    }
+    // Job
+    assert_eq!(r["inJob"], true);
+    assert_eq!(r["job"]["killOnClose"], true);
+    assert_eq!(r["job"]["activeProcessLimit"], 1);
+    assert_eq!(r["job"]["dieOnUnhandledException"], true);
+    assert_eq!(r["job"]["processMemoryLimit"], 2u64 << 30);
+    assert_eq!(r["job"]["breakawayAllowed"], false);
+    assert_ne!(r["uiRestrictions"], "0x0");
+    // Mitigations (best effort, but expected on this Windows build)
+    assert_eq!(r["mitigations"]["childProcess"].as_u64().unwrap() & 1, 1);
+    assert_eq!(r["mitigations"]["extensionPoints"].as_u64().unwrap() & 1, 1);
+    assert_eq!(r["mitigations"]["imageLoad"].as_u64().unwrap() & 0b111, 0b111);
+    assert_eq!(r["mitigations"]["font"].as_u64().unwrap() & 1, 1);
+    // Handles, processes, environment
+    assert_eq!(r["inheritedHandleUsable"], false, "an inheritable parent handle leaked into Xray");
+    assert_eq!(r["canStartProcess"], false, "Xray could start a program");
+    assert_eq!(r["env"], json!(["SystemRoot"]));
+    // Files and registry
+    assert_eq!(r["reads"][s(&doc)], false, "Xray could read a user document");
+    assert_eq!(r["reads"][s(&secret)], false, "Xray could read the credential store");
+    assert_eq!(r["reads"][s(&tmp_file)], false, "Xray could read user temp files");
+    assert_eq!(r["reads"][s(&hosts)], true, "baseline: world-readable system files stay readable");
+    for (path, ok) in r["writes"].as_object().unwrap() {
+        assert_eq!(ok, &json!(false), "Xray could write {path}");
+    }
+    assert_eq!(r["canWriteHkcuSoftware"], false, "Xray could write HKCU Software");
+    assert_eq!(r["canWriteHkcuAppDataLow"], false, "Xray could write HKCU AppDataLow");
+}
+
+
+/// Fail closed: when a MANDATORY protection cannot be established, no Xray runs, no port opens,
+/// and the user sees "Runtime security check failed" (never a silently weaker launch).
+#[cfg(windows)]
+#[test]
+fn mandatory_protection_failure_blocks_connection() {
+    let _ = require_xray!();
+    let e = env().unwrap();
+    let mut o = opts(&e);
+    o.extra_env = vec![("PRIVATE_PROXY_TEST_BREAK_ISOLATION", "1")];
+    let mut h = Host::start(&o);
+    h.ok("hello", json!({"protocolVersion": 2, "extensionVersion": "test"}));
+    // The IDE passthrough (also a Xray launch) must not have started either.
+    assert!(!port_open(o.jb_http) && !port_open(o.jb_socks), "IDE endpoint started despite the failed check");
+    let (_, link) = links(&e).remove(1);
+    let imp = h.ok("importText", json!({"text": link, "source": "paste"}));
+    let st = h.connect_and_wait(imp["serverIds"][0].as_str().unwrap());
+    assert_eq!(st["state"], "error", "{st}");
+    assert!(st["error"]["message"].as_str().unwrap().starts_with("Runtime security check failed"), "{st}");
+    assert!(st["proxy"].is_null());
+    assert!(h.ok("getDiagnostics", json!({}))["xrayPid"].is_null(), "an Xray process is running");
+}
+
+/// Fail closed: a data folder that is no longer private (here: readable by Everyone) blocks the
+/// connection before any credential reaches Xray.
+#[cfg(windows)]
+#[test]
+fn weakened_data_folder_blocks_connection() {
+    let _ = require_xray!();
+    let e = env().unwrap();
+    let o = opts(&e);
+    let mut h = Host::start(&o);
+    h.ok("hello", json!({"protocolVersion": 2, "extensionVersion": "test"}));
+    let (_, link) = links(&e).remove(1);
+    let imp = h.ok("importText", json!({"text": link, "source": "paste"}));
+    let data = PathBuf::from(h.ok("getDiagnostics", json!({}))["dataDir"].as_str().unwrap());
+    let icacls = PathBuf::from(std::env::var("SystemRoot").unwrap()).join("System32").join("icacls.exe");
+    let st = Command::new(&icacls).arg(&data).args(["/grant", "*S-1-1-0:(OI)(CI)R"]).output().unwrap();
+    assert!(st.status.success(), "{}", String::from_utf8_lossy(&st.stdout));
+    let st = h.connect_and_wait(imp["serverIds"][0].as_str().unwrap());
+    assert_eq!(st["state"], "error", "{st}");
+    let m = st["error"]["message"].as_str().unwrap();
+    assert!(m.starts_with("Runtime security check failed") && m.contains("grants access"), "{m}");
+    assert!(h.ok("getDiagnostics", json!({}))["xrayPid"].is_null());
 }

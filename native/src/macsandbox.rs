@@ -10,11 +10,10 @@
 //! A compromised Xray therefore cannot read the stored credentials or the user's files, plant
 //! files, or start programs. It can still use the network (which it needs).
 //!
-//! `sandbox-exec` is deprecated by Apple but still shipped and functional. Because this could not
-//! be validated on a Mac during development, the helper runs a **self-test** (sandboxed
-//! `xray version`) once per session. If the sandbox is unavailable or the self-test fails, Xray
-//! runs unsandboxed, the reason goes to the log, and Diagnostics shows `sandbox: false`.
-//! The runtime never hides this state.
+//! `sandbox-exec` is deprecated by Apple (see docs/threat-model.md, "macOS isolation"). The helper
+//! runs a **self-test** (sandboxed `xray version`) once per session. The sandbox is MANDATORY: if it
+//! is unavailable or the self-test fails, Xray is **not started** and the connection fails with
+//! "Runtime security check failed". It is never started unsandboxed.
 
 #![cfg_attr(not(target_os = "macos"), allow(dead_code))]
 
@@ -81,7 +80,7 @@ pub fn usable(xray: &Path) -> Result<(), String> {
             let r = self_test(xray);
             match &r {
                 Ok(()) => crate::log::info("Xray runs in the macOS sandbox"),
-                Err(e) => crate::log::error(format!("Xray runs WITHOUT the macOS sandbox: {e}")),
+                Err(e) => crate::log::error(format!("macOS sandbox unavailable; Xray will not be started: {e}")),
             }
             r
         })

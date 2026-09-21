@@ -97,6 +97,11 @@ impl Proc {
         let r = {
             use std::process::{Command, Stdio};
             #[cfg(target_os = "macos")]
+            // MANDATORY: never run Xray outside the sandbox.
+            if let Err(e) = crate::macsandbox::usable(xray) {
+                drop(guard);
+                return Err(format!("runtime security check failed: the macOS sandbox is unavailable ({e})"));
+            }
             let mut c = match crate::macsandbox::usable(xray) {
                 Ok(()) => {
                     let mut c = Command::new(crate::macsandbox::SANDBOX_EXEC);
@@ -104,7 +109,7 @@ impl Proc {
                     c.arg("-p").arg(crate::macsandbox::profile(xray, &crate::paths::home_dir())).arg(std::fs::canonicalize(xray).unwrap_or_else(|_| xray.to_path_buf()));
                     c
                 }
-                Err(_) => Command::new(xray),
+                Err(_) => unreachable!("checked above"),
             };
             #[cfg(not(target_os = "macos"))]
             let mut c = Command::new(xray);
@@ -118,7 +123,14 @@ impl Proc {
                 .map(|inner| Proc { inner })
         };
         drop(guard);
-        r.map_err(|e| format!("could not start Xray: {e}"))
+        r.map_err(|e| {
+            let m = e.to_string();
+            if m.starts_with("runtime security check failed") {
+                m
+            } else {
+                format!("could not start Xray: {m}")
+            }
+        })
     }
     fn id(&self) -> u32 {
         self.inner.id()

@@ -84,6 +84,45 @@ pub fn is_link(p: &Path) -> bool {
     }
 }
 
+/// MANDATORY check before any secret (Xray config, credentials) is handed to Xray: `dir` must
+/// be private right now, as read back from the OS (not assumed from an earlier restrict call).
+/// Windows: protected DACL granting only this user, SYSTEM and Administrators, plus a mandatory
+/// label with no-read-up. Unix: no group/other permission bits.
+pub fn verify_private_dir(dir: &Path) -> Result<(), String> {
+    if is_link(dir) {
+        return Err(format!("{} is a link or junction", dir.display()));
+    }
+    #[cfg(windows)]
+    {
+        let sddl = win::sddl_of(dir).ok_or("cannot read the permissions of the data folder")?;
+        let sid = win::current_user_sid().map_err(|e| e.to_string())?;
+        let (dacl, label) = sddl.split_once("S:").unwrap_or((&sddl, ""));
+        if !dacl.starts_with("D:P") {
+            return Err("the data folder inherits permissions from its parent".into());
+        }
+        for ace in dacl.trim_start_matches("D:P").trim_start_matches("AI").split(')').filter(|a| !a.is_empty()) {
+            let trustee = ace.rsplit(';').next().unwrap_or("");
+            if trustee != sid && trustee != "SY" && trustee != "BA" {
+                return Err(format!("the data folder grants access to {trustee}"));
+            }
+        }
+        let ml = label.split("(ML;").nth(1).unwrap_or("");
+        if !ml.contains("NR") {
+            return Err("the data folder is readable by Low-integrity processes".into());
+        }
+        Ok(())
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(dir).map_err(|e| e.to_string())?.permissions().mode();
+        if mode & 0o077 != 0 {
+            return Err(format!("the data folder is accessible to other users (mode {:o})", mode & 0o777));
+        }
+        Ok(())
+    }
+}
+
 /// Human-readable description of `dir`'s protection, for diagnostics and tests
 /// (Windows: the SDDL of its DACL and label; Unix: the mode).
 pub fn describe_dir(dir: &Path) -> Option<String> {
