@@ -28,7 +28,7 @@ class FakePort implements PortLike {
 }
 
 const hello = { nativeVersion: '1.0.0', protocolVersion: 1, xrayVersion: '26.3.27', xrayAvailable: true, platform: 'windows-x86_64', keyStorage: 'x' };
-const jb = { enabled: true, mode: 'direct' as const, socksPort: 10808, httpPort: 10809, issue: null };
+const jb = { enabled: true, mode: 'direct' as const, socksPort: 10808, httpPort: 10809, issue: null, authRequired: true };
 const status = (s: Partial<NativeStatus>): NativeStatus => ({ state: 'disconnected', jetbrains: jb, xrayAvailable: true, ...s });
 
 function setup(opts: { proxyError?: string | null; connectThrows?: boolean; lastError?: string; helloError?: { code: string; message: string } } = {}) {

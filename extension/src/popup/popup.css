@@ -121,3 +121,15 @@ textarea { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-
 .result.error { background: var(--danger-bg); border-color: var(--err); }
 .toast { position: fixed; left: 10px; right: 10px; bottom: 10px; padding: 8px 10px; border-radius: 6px; background: var(--fg); color: var(--bg); }
 .rename-input { padding: 2px 4px !important; }
+
+.server-tools { margin-top: 6px; gap: 6px; }
+.server-tools button { flex: 1; }
+#rename-row input { flex: 1; }
+
+.cred { border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; margin: 6px 0; }
+.cred .row { align-items: center; gap: 6px; margin: 4px 0; }
+.cred-label { width: 70px; color: var(--muted); font-size: 12px; }
+.cred code { flex: 1; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* The hidden attribute must win over display rules such as .row { display: flex }. */
+[hidden] { display: none !important; }

@@ -1,8 +1,8 @@
 // Popup UI. All data from the helper (server names, messages) is untrusted and is only
 // ever written with textContent / value, never as HTML.
-import type { CommandName, Commands, ImportResult, NativeResponse, ServerList, ServerSummary, Settings, SubscriptionResult } from '../../../shared/protocol/types';
+import type { CommandName, Commands, IdeCredentials, ImportResult, NativeResponse, ServerList, Settings, SubscriptionResult } from '../../../shared/protocol/types';
 import type { AppState, SwPush } from '../shared/app-state';
-import { currentServerId, deriveView, protocolLine } from '../shared/view';
+import { currentServerId, deriveView, filterOptions, filterServers, normalizeFilter, protocolLine, type ServerFilter } from '../shared/view';
 import { captureVisibleTab, decodeQrFromBlob, looksLikeProxyConfig } from './qr';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -11,6 +11,8 @@ let app: AppState | null = null;
 let list: ServerList = { servers: [], subscriptions: [], selectedServerId: null };
 let view: 'main' | 'import' | 'settings' = 'main';
 let busyAction = false;
+let serverFilter: ServerFilter = 'all';
+let renaming = false;
 
 function request<K extends CommandName>(cmd: K, args: Commands[K]): Promise<NativeResponse> {
   return chrome.runtime.sendMessage({ type: 'request', cmd, args }) as Promise<NativeResponse>;
@@ -70,31 +72,57 @@ function render() {
 
   const ready = app.runtime.kind === 'ready';
   $('server-block').hidden = !ready;
-  $('servers-section').hidden = !ready;
   $('nav-settings').hidden = view !== 'main' || !ready;
 
-  // Server selector
-  const sel = $<HTMLSelectElement>('server-select');
-  const current = currentServerId(app, list.selectedServerId);
-  sel.replaceChildren(
-    ...list.servers.map((s) => {
+  // Filter: all / manually added / one subscription.
+  serverFilter = normalizeFilter(list, serverFilter);
+  const filterSel = $<HTMLSelectElement>('server-filter');
+  filterSel.replaceChildren(
+    ...filterOptions(list).map((f) => {
       const o = document.createElement('option');
-      o.value = s.id;
-      o.textContent = s.name;
+      o.value = f.value;
+      o.textContent = f.label;
       return o;
     }),
   );
-  if (list.servers.length === 0) {
+  filterSel.value = serverFilter;
+  filterSel.disabled = !ready || list.servers.length === 0;
+
+  // Server selector (only the servers of the chosen filter; the active server always stays visible).
+  const sel = $<HTMLSelectElement>('server-select');
+  const current = currentServerId(app, list.selectedServerId);
+  const shown = filterServers(list, serverFilter);
+  const currentServer = list.servers.find((s) => s.id === current);
+  const options = currentServer && !shown.includes(currentServer) ? [currentServer, ...shown] : shown;
+  const activeId = app.status && (app.status.state === 'connected' || app.status.state === 'connecting') ? app.status.serverId : null;
+  sel.replaceChildren(
+    ...options.map((s) => {
+      const o = document.createElement('option');
+      o.value = s.id;
+      o.textContent = s.id === activeId && app?.status?.state === 'connected' ? `● ${s.name}` : s.name;
+      return o;
+    }),
+  );
+  if (options.length === 0) {
     const o = document.createElement('option');
-    o.textContent = 'No servers';
+    o.textContent = list.servers.length === 0 ? 'No servers' : 'No servers in this group';
     o.value = '';
     sel.append(o);
   }
-  sel.value = current ?? '';
+  sel.value = current && options.some((s) => s.id === current) ? current : '';
   const st = app.status?.state;
-  sel.disabled = !ready || st === 'connecting' || st === 'disconnecting' || list.servers.length === 0;
+  const locked = !ready || st === 'connecting' || st === 'disconnecting';
+  sel.disabled = locked || options.length === 0;
+  sel.hidden = renaming;
+  $('rename-row').hidden = !renaming;
   const server = list.servers.find((s) => s.id === current);
-  $('protocol-line').textContent = server ? `${protocolLine(server)} · ${server.address}:${server.port}` : '';
+  const subName = server?.subscriptionId ? list.subscriptions.find((x) => x.id === server.subscriptionId)?.name : null;
+  $('protocol-line').textContent = server
+    ? `${protocolLine(server)} · ${server.address}:${server.port}${subName ? ` · from "${subName}"` : ''}`
+    : '';
+  $<HTMLButtonElement>('server-rename').disabled = locked || !server || renaming;
+  $<HTMLButtonElement>('server-delete').disabled = locked || !server || renaming;
+  $('empty-servers').hidden = list.servers.length > 0;
 
   // Primary button
   const btn = $<HTMLButtonElement>('primary');
@@ -128,121 +156,83 @@ function render() {
   if (ready && jb?.enabled) {
     const eps = [jb.httpPort ? `HTTP 127.0.0.1:${jb.httpPort}` : null, jb.socksPort ? `SOCKS 127.0.0.1:${jb.socksPort}` : null].filter(Boolean).join(' · ');
     const mode = jb.mode === 'tunnel' ? 'via tunnel' : jb.mode === 'direct' ? 'direct' : 'off';
-    ide.textContent = jb.issue ? `IDE proxy: ${jb.issue}` : eps ? `IDE proxy (${mode}): ${eps}` : 'IDE proxy: off while disconnected';
+    const lock = jb.authRequired ? ' · password required' : '';
+    ide.textContent = jb.issue ? `IDE proxy: ${jb.issue}` : eps ? `IDE proxy (${mode}): ${eps}${lock}` : 'IDE proxy: off while disconnected';
     ide.hidden = false;
   } else {
     ide.hidden = true;
   }
 
-  renderServerList(current);
 }
 
-function renderServerList(current: string | null) {
-  const ul = $('server-list');
-  const activeId = app?.status && (app.status.state === 'connected' || app.status.state === 'connecting') ? app.status.serverId : null;
-  const subs = new Map(list.subscriptions.map((s) => [s.id, s.name]));
-  ul.replaceChildren(...list.servers.map((s) => serverItem(s, s.id === current, s.id === activeId, subs.get(s.subscriptionId ?? '') ?? null)));
-  $('empty-servers').hidden = list.servers.length > 0;
+async function selectServer(id: string) {
+  const r = await request('selectServer', { id });
+  if (r.ok) list.selectedServerId = id;
+  // Switching servers while connected reconnects to the new one.
+  if (app?.status?.state === 'connected' && app.status.serverId !== id) await connect(id);
+  render();
 }
 
-function serverItem(s: ServerSummary, selected: boolean, active: boolean, subName: string | null): HTMLLIElement {
-  const li = document.createElement('li');
-  li.tabIndex = 0;
-  li.className = selected ? 'selected' : '';
-  const grow = document.createElement('div');
-  grow.className = 'grow';
-  const name = document.createElement('div');
-  name.className = 'name';
-  name.textContent = s.name;
-  const sub = document.createElement('div');
-  sub.className = 'sub';
-  sub.textContent = protocolLine(s);
-  grow.append(name, sub);
-  li.append(grow);
-  if (active) {
-    const m = document.createElement('span');
-    m.className = 'active-mark';
-    m.textContent = app?.status?.state === 'connected' ? '● active' : '…';
-    li.append(m);
+async function onFilterChange(value: string) {
+  serverFilter = normalizeFilter(list, value);
+  try {
+    await chrome.storage.local.set({ serverFilter });
+  } catch {
+    /* preference only */
   }
-  if (subName) {
-    const b = document.createElement('span');
-    b.className = 'badge';
-    b.textContent = subName;
-    b.title = 'From subscription';
-    li.append(b);
+  // While disconnected, pick the first server of the new group so "Connect" uses it.
+  const shown = filterServers(list, serverFilter);
+  const st = app?.status?.state;
+  const idle = st !== 'connected' && st !== 'connecting' && st !== 'disconnecting';
+  if (idle && shown.length && !shown.some((x) => x.id === list.selectedServerId)) {
+    await selectServer(shown[0].id);
+    return;
   }
-  const actions = document.createElement('div');
-  actions.className = 'actions';
-  const rename = document.createElement('button');
-  rename.className = 'link';
-  rename.textContent = 'Rename';
-  rename.onclick = (e) => {
-    e.stopPropagation();
-    startRename(li, name, s);
-  };
-  const del = document.createElement('button');
-  del.className = 'link';
-  del.textContent = 'Delete';
-  del.onclick = async (e) => {
-    e.stopPropagation();
-    if (del.dataset.armed !== '1') {
-      del.dataset.armed = '1';
-      del.textContent = 'Confirm?';
-      setTimeout(() => {
-        del.dataset.armed = '';
-        del.textContent = 'Delete';
-      }, 3000);
-      return;
-    }
-    const r = await request('deleteServer', { id: s.id });
-    if (!r.ok) toast(r.error.message);
-    await refreshList();
-  };
-  actions.append(rename, del);
-  li.append(actions);
-  const choose = async () => {
-    if (app?.status?.state === 'connecting' || app?.status?.state === 'disconnecting') return;
-    const r = await request('selectServer', { id: s.id });
-    if (r.ok) {
-      list.selectedServerId = s.id;
-      // Switching servers while connected reconnects to the new one.
-      if (app?.status?.state === 'connected' && app.status.serverId !== s.id) await connect(s.id);
-      render();
-    }
-  };
-  li.onclick = choose;
-  li.onkeydown = (e) => {
-    if (e.key === 'Enter') void choose();
-  };
-  return li;
+  render();
 }
 
-function startRename(li: HTMLLIElement, nameEl: HTMLElement, s: ServerSummary) {
-  const input = document.createElement('input');
-  input.type = 'text';
-  input.value = s.name;
-  input.maxLength = 100;
-  input.className = 'rename-input';
-  nameEl.replaceWith(input);
+function startRename() {
+  const server = list.servers.find((s) => s.id === list.selectedServerId);
+  if (!server) return;
+  renaming = true;
+  render();
+  const input = $<HTMLInputElement>('rename-input');
+  input.value = server.name;
   input.focus();
   input.select();
-  input.onclick = (e) => e.stopPropagation();
-  const finish = async (save: boolean) => {
-    input.onblur = null;
-    if (save && input.value.trim() && input.value.trim() !== s.name) {
-      const r = await request('renameServer', { id: s.id, name: input.value.trim() });
-      if (!r.ok) toast(r.error.message);
-    }
-    await refreshList();
-  };
-  input.onkeydown = (e) => {
-    e.stopPropagation();
-    if (e.key === 'Enter') void finish(true);
-    if (e.key === 'Escape') void finish(false);
-  };
-  input.onblur = () => void finish(true);
-  void li;
+}
+
+async function finishRename(save: boolean) {
+  const server = list.servers.find((s) => s.id === list.selectedServerId);
+  const name = $<HTMLInputElement>('rename-input').value.trim();
+  renaming = false;
+  if (save && server && name && name !== server.name) {
+    const r = await request('renameServer', { id: server.id, name });
+    if (!r.ok) toast(r.error.message);
+  }
+  await refreshList();
+  render();
+}
+
+let deleteArmed: ReturnType<typeof setTimeout> | null = null;
+async function deleteSelected() {
+  const btn = $<HTMLButtonElement>('server-delete');
+  const server = list.servers.find((s) => s.id === list.selectedServerId);
+  if (!server) return;
+  if (!deleteArmed) {
+    btn.textContent = 'Confirm delete?';
+    deleteArmed = setTimeout(() => {
+      deleteArmed = null;
+      btn.textContent = 'Delete';
+    }, 3000);
+    return;
+  }
+  clearTimeout(deleteArmed);
+  deleteArmed = null;
+  btn.textContent = 'Delete';
+  const r = await request('deleteServer', { id: server.id });
+  if (!r.ok) toast(r.error.message);
+  await refreshList();
 }
 
 // ------------------------------------------------------------------ actions
@@ -355,6 +345,8 @@ async function loadSettings() {
     $<HTMLInputElement>('jb-passthrough').checked = s.passthroughWhenDisconnected;
     $<HTMLInputElement>('debug-log').checked = s.debugLogging;
     $<HTMLInputElement>('sub-private').checked = s.allowPrivateSubscriptionHosts;
+    $<HTMLInputElement>('jb-auth').checked = s.ideAuth;
+    await loadIdeCredentials(s.ideAuth);
   }
   const { webrtcProtection } = await chrome.storage.local.get('webrtcProtection');
   $<HTMLInputElement>('webrtc').checked = webrtcProtection !== false; // on by default
@@ -419,6 +411,32 @@ function renderSubscriptions() {
   $('empty-subs').hidden = list.subscriptions.length > 0;
 }
 
+let idePassword = '';
+
+async function loadIdeCredentials(required: boolean) {
+  $('jb-cred').hidden = !required;
+  if (!required) return;
+  const r = await request('getIdeCredentials', {});
+  if (!r.ok) {
+    showResult($('settings-result'), r.error.message, true);
+    return;
+  }
+  const c = r.result as IdeCredentials;
+  $('jb-user').textContent = c.username;
+  idePassword = c.password;
+  $('jb-pass').textContent = '••••••••';
+  $('jb-show-pass').textContent = 'Show';
+}
+
+async function copyText(text: string, what: string) {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast(`${what} copied`);
+  } catch {
+    toast('Could not copy');
+  }
+}
+
 async function saveJetbrains() {
   const http = Number($<HTMLInputElement>('jb-http').value);
   const socks = Number($<HTMLInputElement>('jb-socks').value);
@@ -432,7 +450,9 @@ async function saveJetbrains() {
     jetbrainsHttpPort: http,
     jetbrainsSocksPort: socks,
     passthroughWhenDisconnected: $<HTMLInputElement>('jb-passthrough').checked,
+    ideAuth: $<HTMLInputElement>('jb-auth').checked,
   });
+  if (r.ok) await loadIdeCredentials($<HTMLInputElement>('jb-auth').checked);
   if (r.ok) {
     const needs = (r.result as { reconnectRequired?: boolean }).reconnectRequired;
     showResult(out, needs ? 'Saved. Reconnect to apply the new ports.' : 'Saved.', false);
@@ -479,13 +499,18 @@ function wire() {
   $('nav-import').onclick = () => setView('import');
   $('nav-back').onclick = () => setView('main');
   $('primary').onclick = () => void onPrimary();
-  $<HTMLSelectElement>('server-select').onchange = async (e) => {
+  $<HTMLSelectElement>('server-select').onchange = (e) => {
     const id = (e.target as HTMLSelectElement).value;
-    if (!id) return;
-    const r = await request('selectServer', { id });
-    if (r.ok) list.selectedServerId = id;
-    if (app?.status?.state === 'connected' && app.status.serverId !== id) await connect(id);
-    render();
+    if (id) void selectServer(id);
+  };
+  $<HTMLSelectElement>('server-filter').onchange = (e) => void onFilterChange((e.target as HTMLSelectElement).value);
+  $('server-rename').onclick = () => startRename();
+  $('server-delete').onclick = () => void deleteSelected();
+  $('rename-save').onclick = () => void finishRename(true);
+  $('rename-cancel').onclick = () => void finishRename(false);
+  $<HTMLInputElement>('rename-input').onkeydown = (e) => {
+    if (e.key === 'Enter') void finishRename(true);
+    if (e.key === 'Escape') void finishRename(false);
   };
 
   for (const tab of document.querySelectorAll<HTMLButtonElement>('.tabs [role=tab]')) {
@@ -540,12 +565,46 @@ function wire() {
     const r = await request('setSettings', { allowPrivateSubscriptionHosts: (e.target as HTMLInputElement).checked });
     if (!r.ok) toast(r.error.message);
   };
+  $<HTMLInputElement>('jb-auth').onchange = (e) => {
+    if (!(e.target as HTMLInputElement).checked) {
+      showResult($('settings-result'), 'Without a password, any program on this computer can use the IDE proxy. Click Save to apply.', true);
+    }
+  };
+  $('jb-copy-user').onclick = () => void copyText($('jb-user').textContent ?? '', 'Username');
+  $('jb-copy-pass').onclick = () => void copyText(idePassword, 'Password');
+  $('jb-show-pass').onclick = () => {
+    const shown = $('jb-show-pass').textContent === 'Hide';
+    $('jb-pass').textContent = shown ? '••••••••' : idePassword;
+    $('jb-show-pass').textContent = shown ? 'Show' : 'Hide';
+  };
+  $('jb-new-pass').onclick = async () => {
+    const r = await request('regenerateIdeCredentials', {});
+    if (!r.ok) {
+      toast(r.error.message);
+      return;
+    }
+    const c = r.result as IdeCredentials;
+    idePassword = c.password;
+    $('jb-pass').textContent = '••••••••';
+    $('jb-show-pass').textContent = 'Show';
+    showResult($('settings-result'), c.reconnectRequired ? 'New password created. Reconnect to apply it, then update the IDE.' : 'New password created. Update it in the IDE.', false);
+  };
   $('copy-diag').onclick = () => void copyDiagnostics();
   $('reset-all').onclick = (e) => void resetAll(e.target as HTMLButtonElement);
 }
 
+async function loadFilter() {
+  try {
+    const { serverFilter: saved } = await chrome.storage.local.get('serverFilter');
+    if (typeof saved === 'string') serverFilter = saved;
+  } catch {
+    /* storage unavailable: default "all" */
+  }
+}
+
 function main() {
   wire();
+  void loadFilter().then(() => render());
   setView('main');
   const port = chrome.runtime.connect({ name: 'popup' });
   let wasReady = false;

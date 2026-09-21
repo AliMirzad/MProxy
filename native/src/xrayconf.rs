@@ -32,44 +32,50 @@ pub struct JetbrainsPorts {
     pub http: Option<u16>,
 }
 
+/// Credentials required on the IDE inbounds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IdeAuth {
+    pub user: String,
+    pub pass: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct RuntimePlan {
-    /// Browser-facing SOCKS inbound; `None` in passthrough mode.
+    /// Browser-facing SOCKS inbound; `None` in passthrough mode. Always without authentication:
+    /// Chromium cannot send SOCKS credentials.
     pub browser_port: Option<u16>,
     pub jetbrains: JetbrainsPorts,
+    /// `Some`: the IDE HTTP and SOCKS inbounds require these credentials.
+    pub ide_auth: Option<IdeAuth>,
     pub log_level: &'static str,
 }
 
-fn socks_inbound(tag: &str, port: u16) -> Value {
-    json!({
-        "tag": tag,
-        "listen": LOOPBACK,
-        "port": port,
-        "protocol": "socks",
-        "settings": { "auth": "noauth", "udp": false }
-    })
+fn socks_inbound(tag: &str, port: u16, auth: Option<&IdeAuth>) -> Value {
+    let settings = match auth {
+        Some(a) => json!({ "auth": "password", "accounts": [{ "user": a.user, "pass": a.pass }], "udp": false }),
+        None => json!({ "auth": "noauth", "udp": false }),
+    };
+    json!({ "tag": tag, "listen": LOOPBACK, "port": port, "protocol": "socks", "settings": settings })
 }
 
-fn http_inbound(tag: &str, port: u16) -> Value {
-    json!({
-        "tag": tag,
-        "listen": LOOPBACK,
-        "port": port,
-        "protocol": "http",
-        "settings": { "allowTransparent": false }
-    })
+fn http_inbound(tag: &str, port: u16, auth: Option<&IdeAuth>) -> Value {
+    let settings = match auth {
+        Some(a) => json!({ "accounts": [{ "user": a.user, "pass": a.pass }], "allowTransparent": false }),
+        None => json!({ "allowTransparent": false }),
+    };
+    json!({ "tag": tag, "listen": LOOPBACK, "port": port, "protocol": "http", "settings": settings })
 }
 
 fn inbounds(plan: &RuntimePlan) -> Vec<Value> {
     let mut v = Vec::new();
     if let Some(p) = plan.browser_port {
-        v.push(socks_inbound("browser-socks", p));
+        v.push(socks_inbound("browser-socks", p, None));
     }
     if let Some(p) = plan.jetbrains.socks {
-        v.push(socks_inbound("ide-socks", p));
+        v.push(socks_inbound("ide-socks", p, plan.ide_auth.as_ref()));
     }
     if let Some(p) = plan.jetbrains.http {
-        v.push(http_inbound("ide-http", p));
+        v.push(http_inbound("ide-http", p, plan.ide_auth.as_ref()));
     }
     v
 }
@@ -248,6 +254,7 @@ mod tests {
         RuntimePlan {
             browser_port: Some(50000),
             jetbrains: JetbrainsPorts { socks: Some(10808), http: Some(10809) },
+            ide_auth: None,
             log_level: "warning",
         }
     }

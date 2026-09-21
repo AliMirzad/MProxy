@@ -31,6 +31,8 @@ export interface JetbrainsStatus {
   socksPort: number | null;
   httpPort: number | null;
   issue: string | null;
+  /** The IDE endpoint requires the credentials from getIdeCredentials. */
+  authRequired: boolean;
 }
 
 export type ConnState = 'disconnected' | 'connecting' | 'connected' | 'disconnecting' | 'error';
@@ -111,6 +113,8 @@ export interface Settings {
   debugLogging: boolean;
   /** Allow subscription URLs on private networks (company-internal servers). Default off. */
   allowPrivateSubscriptionHosts: boolean;
+  /** Require a username/password on the IDE endpoint. Default on. */
+  ideAuth: boolean;
 }
 
 /** Commands the UI may send, with their argument types. */
@@ -129,6 +133,8 @@ export interface Commands {
   getSettings: Record<string, never>;
   setSettings: Partial<Settings>;
   getDiagnostics: Record<string, never>;
+  getIdeCredentials: Record<string, never>;
+  regenerateIdeCredentials: Record<string, never>;
   resetAll: { confirm: true };
 }
 
@@ -150,8 +156,17 @@ export const UI_COMMANDS: readonly CommandName[] = [
   'getSettings',
   'setSettings',
   'getDiagnostics',
+  'getIdeCredentials',
+  'regenerateIdeCredentials',
   'resetAll',
 ] as const;
 
 export type NativeResponse<T = unknown> = { id: number; ok: true; result: T } | { id: number; ok: false; error: ApiError };
 export type NativeEvent = { event: 'status'; status: NativeStatus } | { event: 'protocolError'; error: ApiError };
+
+export interface IdeCredentials {
+  username: string;
+  password: string;
+  required: boolean;
+  reconnectRequired: boolean;
+}

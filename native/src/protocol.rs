@@ -42,6 +42,8 @@ pub enum Request {
     GetSettings(Empty),
     SetSettings(SettingsPatch),
     GetDiagnostics(Empty),
+    GetIdeCredentials(Empty),
+    RegenerateIdeCredentials(Empty),
     ResetAll(ResetArgs),
 }
 
@@ -101,6 +103,7 @@ pub struct SettingsPatch {
     pub passthrough_when_disconnected: Option<bool>,
     pub debug_logging: Option<bool>,
     pub allow_private_subscription_hosts: Option<bool>,
+    pub ide_auth: Option<bool>,
 }
 
 #[derive(Deserialize, Debug, PartialEq)]

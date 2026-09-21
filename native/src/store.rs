@@ -27,6 +27,9 @@ pub struct Settings {
     /// Allow subscription URLs on private networks (company-internal servers). Off by default:
     /// see netpolicy.rs.
     pub allow_private_subscription_hosts: bool,
+    /// Require a username/password on the IDE endpoint (HTTP and SOCKS). On by default: the
+    /// loopback ports are otherwise usable by every local process, including other users'.
+    pub ide_auth: bool,
 }
 
 impl Default for Settings {
@@ -38,6 +41,7 @@ impl Default for Settings {
             passthrough_when_disconnected: true,
             debug_logging: false,
             allow_private_subscription_hosts: false,
+            ide_auth: true,
         }
     }
 }
@@ -70,6 +74,18 @@ pub struct StateFile {
 pub struct SecretsFile {
     pub servers: HashMap<String, ServerSecrets>,
     pub subscriptions: HashMap<String, String>,
+    /// Password of the IDE endpoint (generated on first use, stored encrypted).
+    pub ide_password: Option<String>,
+}
+
+/// Fixed user name of the IDE endpoint; only the password is secret.
+pub const IDE_USER: &str = "privateproxy";
+
+fn new_password() -> String {
+    use rand::Rng;
+    const ALPHABET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+    let mut rng = rand::rngs::OsRng;
+    (0..24).map(|_| ALPHABET[rng.gen_range(0..ALPHABET.len())] as char).collect()
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -243,6 +259,31 @@ impl Store {
             StoreError::Invalid("Credentials for this server are missing; please import it again".into())
         })?;
         Ok((meta, secrets))
+    }
+
+    /// Password of the IDE endpoint, created (and stored encrypted) on first use.
+    pub fn ide_password(&self) -> Result<String, StoreError> {
+        let _l = self.lock()?;
+        let (mut sec, key) = self.read_secrets_unlocked(true)?;
+        if let Some(p) = &sec.ide_password {
+            return Ok(p.clone());
+        }
+        let key = key.ok_or(SecretError::KeyMissing)?;
+        let p = new_password();
+        sec.ide_password = Some(p.clone());
+        self.write_secrets_unlocked(&sec, &key)?;
+        Ok(p)
+    }
+
+    /// Replaces the IDE endpoint password.
+    pub fn regenerate_ide_password(&self) -> Result<String, StoreError> {
+        let _l = self.lock()?;
+        let (mut sec, key) = self.read_secrets_unlocked(true)?;
+        let key = key.ok_or(SecretError::KeyMissing)?;
+        let p = new_password();
+        sec.ide_password = Some(p.clone());
+        self.write_secrets_unlocked(&sec, &key)?;
+        Ok(p)
     }
 
     pub fn subscription_url(&self, id: &str) -> Result<String, StoreError> {

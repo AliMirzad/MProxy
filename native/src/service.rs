@@ -67,6 +67,8 @@ pub struct JetbrainsStatus {
     pub socks_port: Option<u16>,
     pub http_port: Option<u16>,
     pub issue: Option<String>,
+    /// The IDE endpoint requires the username/password from getIdeCredentials.
+    pub auth_required: bool,
 }
 
 enum Mode {
@@ -251,6 +253,8 @@ impl Service {
             Request::SelectServer(a) => self.select_server(a),
             Request::Connect(a) => self.connect(a),
             Request::Disconnect(_) => self.disconnect(),
+            Request::GetIdeCredentials(_) => self.ide_credentials(false),
+            Request::RegenerateIdeCredentials(_) => self.ide_credentials(true),
             Request::GetSettings(_) => Ok(serde_json::to_value(self.settings()).unwrap_or(Value::Null)),
             Request::SetSettings(p) => self.set_settings(p),
             Request::GetDiagnostics(_) => Ok(self.diagnostics()),
@@ -552,6 +556,7 @@ impl Service {
                 if let Some(v) = p.passthrough_when_disconnected { s.passthrough_when_disconnected = v; }
                 if let Some(v) = p.debug_logging { s.debug_logging = v; }
                 if let Some(v) = p.allow_private_subscription_hosts { s.allow_private_subscription_hosts = v; }
+                if let Some(v) = p.ide_auth { s.ide_auth = v; }
                 if s.jetbrains_socks_port == s.jetbrains_http_port {
                     return Err(StoreError::Invalid("SOCKS and HTTP ports must differ".into()));
                 }
@@ -562,7 +567,7 @@ impl Service {
         let mut reconnect_required = false;
         match self.mode {
             Mode::Tunnel { .. } => {
-                reconnect_required = p.jetbrains_enabled.is_some() || p.jetbrains_socks_port.is_some() || p.jetbrains_http_port.is_some();
+                reconnect_required = p.jetbrains_enabled.is_some() || p.jetbrains_socks_port.is_some() || p.jetbrains_http_port.is_some() || p.ide_auth.is_some();
             }
             _ => {
                 self.stop_xray();
@@ -573,6 +578,30 @@ impl Service {
         let mut v = serde_json::to_value(new).unwrap_or(Value::Null);
         v["reconnectRequired"] = json!(reconnect_required);
         Ok(v)
+    }
+
+    /// Credentials for the IDE endpoint, shown in the popup so the user can enter them in the IDE.
+    fn ide_credentials(&mut self, regenerate: bool) -> ApiResult {
+        let pass = if regenerate { self.store.regenerate_ide_password() } else { self.store.ide_password() }.map_err(store_err)?;
+        if regenerate && self.settings().ide_auth {
+            // Running inbounds still use the old password: restart them with the new one.
+            if let Mode::Tunnel { .. } = self.mode {
+                return Ok(json!({ "username": store::IDE_USER, "password": pass, "required": true, "reconnectRequired": true }));
+            }
+            self.stop_xray();
+            self.ensure_passthrough();
+            self.emit_status();
+        }
+        Ok(json!({ "username": store::IDE_USER, "password": pass, "required": self.settings().ide_auth, "reconnectRequired": false }))
+    }
+
+    /// Credentials the IDE inbounds must require, if enabled.
+    fn ide_auth(&self, s: &Settings) -> Result<Option<xrayconf::IdeAuth>, String> {
+        if !s.ide_auth {
+            return Ok(None);
+        }
+        let pass = self.store.ide_password().map_err(|e| store_err(e).message)?;
+        Ok(Some(xrayconf::IdeAuth { user: store::IDE_USER.into(), pass }))
     }
 
     fn diagnostics(&self) -> Value {
@@ -623,6 +652,7 @@ impl Service {
         self.jetbrains.socks_port = None;
         self.jetbrains.http_port = None;
         self.jetbrains.issue = None;
+        self.jetbrains.auth_required = false;
         if !s.jetbrains_enabled {
             return JetbrainsPorts { socks: None, http: None };
         }
@@ -660,7 +690,16 @@ impl Service {
         };
         let jb = self.jetbrains_plan(&s);
         let Some(probe_port) = jb.http.or(jb.socks) else { return };
-        let plan = RuntimePlan { browser_port: None, jetbrains: jb, log_level: Self::log_level() };
+        let ide_auth = match self.ide_auth(&s) {
+            Ok(a) => a,
+            Err(e) => {
+                // Never fall back to an open endpoint when a password is required.
+                self.jetbrains.issue = Some(format!("The local IDE proxy could not be started: {e}"));
+                return;
+            }
+        };
+        self.jetbrains.auth_required = ide_auth.is_some();
+        let plan = RuntimePlan { browser_port: None, jetbrains: jb, ide_auth, log_level: Self::log_level() };
         let cfg = serde_json::to_vec(&xrayconf::passthrough_config(&plan)).unwrap_or_default();
         match xray::spawn(&xray_path, &cfg, self.store.dir()) {
             Ok(r) => {
@@ -731,14 +770,25 @@ impl Service {
             return self.fail(ErrorCode::XrayFailed, format!("Xray integrity check failed: {e}"), Some(sid));
         }
         let s = self.settings();
-        let jb = self.jetbrains_plan(&s);
+        let mut jb = self.jetbrains_plan(&s);
+        let ide_auth = match self.ide_auth(&s) {
+            Ok(a) => a,
+            Err(e) => {
+                // Never expose an open IDE endpoint when a password is required: run the tunnel
+                // for the browser only and report the problem.
+                self.jetbrains.issue = Some(format!("The local IDE proxy is off: {e}"));
+                jb = JetbrainsPorts { socks: None, http: None };
+                None
+            }
+        };
+        self.jetbrains.auth_required = ide_auth.is_some();
         let mut last_err = String::new();
         for try_no in 0..2 {
             let port = match ports::ephemeral_port() {
                 Ok(p) => p,
                 Err(e) => return self.fail(ErrorCode::PortUnavailable, format!("No free local port: {e}"), Some(sid)),
             };
-            let plan = RuntimePlan { browser_port: Some(port), jetbrains: jb, log_level: Self::log_level() };
+            let plan = RuntimePlan { browser_port: Some(port), jetbrains: jb, ide_auth: ide_auth.clone(), log_level: Self::log_level() };
             let cfg = serde_json::to_vec(&xrayconf::tunnel_config(meta, secrets, &plan)).unwrap_or_default();
             if try_no == 0 {
                 if let Err(reason) = xray::test_config(&xray_path, &cfg) {

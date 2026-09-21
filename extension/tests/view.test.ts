@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { deriveView, protocolLine, currentServerId } from '../src/shared/view';
+import { deriveView, protocolLine, currentServerId, filterOptions, filterServers, normalizeFilter } from '../src/shared/view';
 import { BYPASS_LIST, controlProblem, proxyConfig } from '../src/background/chrome-adapters';
 import type { AppState } from '../src/shared/app-state';
 import type { NativeStatus, ServerSummary } from '../../shared/protocol/types';
 
 const hello = { nativeVersion: '1.0.0', protocolVersion: 1, xrayVersion: '26.3.27', xrayAvailable: true, platform: 'x', keyStorage: 'x' };
-const jb = { enabled: true, mode: 'direct' as const, socksPort: 10808, httpPort: 10809, issue: null };
+const jb = { enabled: true, mode: 'direct' as const, socksPort: 10808, httpPort: 10809, issue: null, authRequired: true };
 const app = (status: Partial<NativeStatus> | null, extra: Partial<AppState> = {}): AppState => ({
   runtime: { kind: 'ready', hello },
   status: status ? { state: 'disconnected', jetbrains: jb, xrayAvailable: true, ...status } : null,
@@ -58,5 +58,39 @@ describe('helpers', () => {
     expect(controlProblem('controlled_by_other_extensions')).toMatch(/Another extension/);
     expect(controlProblem('not_controllable')).toMatch(/policy/);
     expect(controlProblem('controllable_by_this_extension')).toBeNull();
+  });
+});
+
+describe('server filter', () => {
+  const srv = (id: string, subscriptionId: string | null) => ({
+    id, name: id, protocol: 'vless' as const, address: 'a', port: 1, transport: 'raw', transportLabel: 'TCP',
+    security: 'tls', securityLabel: 'TLS', flow: null, subscriptionId,
+  });
+  const list = {
+    servers: [srv('m1', null), srv('w1', 's1'), srv('w2', 's1'), srv('h1', 's2')],
+    subscriptions: [
+      { id: 's1', name: 'Work', host: 'w', lastUpdated: null, lastError: null, serverCount: 2 },
+      { id: 's2', name: 'Home', host: 'h', lastUpdated: null, lastError: null, serverCount: 1 },
+    ],
+    selectedServerId: 'm1',
+  };
+
+  it('offers all, manual and one entry per subscription with counts', () => {
+    expect(filterOptions(list).map((o) => o.label)).toEqual([
+      'All servers (4)', 'Manually added (1)', 'Subscription: Work (2)', 'Subscription: Home (1)',
+    ]);
+  });
+
+  it('filters by origin', () => {
+    expect(filterServers(list, 'all').map((s) => s.id)).toEqual(['m1', 'w1', 'w2', 'h1']);
+    expect(filterServers(list, 'manual').map((s) => s.id)).toEqual(['m1']);
+    expect(filterServers(list, 'sub:s1').map((s) => s.id)).toEqual(['w1', 'w2']);
+  });
+
+  it('falls back to all for unknown or deleted subscriptions', () => {
+    expect(normalizeFilter(list, 'sub:gone')).toBe('all');
+    expect(normalizeFilter(list, undefined)).toBe('all');
+    expect(normalizeFilter(list, 'manual')).toBe('manual');
+    expect(normalizeFilter(list, 'sub:s2')).toBe('sub:s2');
   });
 });

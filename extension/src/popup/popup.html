@@ -23,22 +23,26 @@
         <p id="status-hint" class="hint" hidden></p>
 
         <div id="server-block">
+          <label class="field-label" for="server-filter">Show</label>
+          <select id="server-filter"></select>
           <label class="field-label" for="server-select">Server</label>
           <select id="server-select"></select>
+          <div id="rename-row" class="row" hidden>
+            <input id="rename-input" type="text" maxlength="100" autocomplete="off" aria-label="New server name" />
+            <button id="rename-save" class="small-btn" type="button">Save</button>
+            <button id="rename-cancel" class="small-btn" type="button">Cancel</button>
+          </div>
           <p id="protocol-line" class="muted"></p>
+          <div class="row server-tools">
+            <button id="nav-import" type="button">+ Import</button>
+            <button id="server-rename" type="button">Rename</button>
+            <button id="server-delete" type="button">Delete</button>
+          </div>
+          <p id="empty-servers" class="muted" hidden>No servers yet. Click <b>+ Import</b> to add a VLESS or VMess configuration.</p>
         </div>
 
         <button id="primary" class="primary" type="button">Connect</button>
         <p id="ide-line" class="muted small" hidden></p>
-      </section>
-
-      <section id="servers-section">
-        <div class="section-head">
-          <h2>Servers</h2>
-          <button id="nav-import" type="button">+ Import</button>
-        </div>
-        <ul id="server-list" class="list"></ul>
-        <p id="empty-servers" class="muted" hidden>No servers yet. Click <b>+ Import</b> to add a VLESS or VMess configuration.</p>
       </section>
     </main>
 
@@ -95,6 +99,13 @@
         <input id="jb-socks" type="number" min="1024" max="65535" />
       </div>
       <label class="check"><input id="jb-passthrough" type="checkbox" /> Keep the endpoint working (direct) while disconnected</label>
+      <label class="check"><input id="jb-auth" type="checkbox" /> Require a password for the IDE proxy (recommended)</label>
+      <div id="jb-cred" class="cred" hidden>
+        <p class="muted small">In the IDE: HTTP Proxy → Proxy authentication → enter these.</p>
+        <div class="row"><span class="cred-label">Username</span><code id="jb-user"></code><button id="jb-copy-user" class="small-btn" type="button">Copy</button></div>
+        <div class="row"><span class="cred-label">Password</span><code id="jb-pass">••••••••</code><button id="jb-show-pass" class="small-btn" type="button">Show</button><button id="jb-copy-pass" class="small-btn" type="button">Copy</button></div>
+        <div class="row end"><button id="jb-new-pass" class="small-btn" type="button">New password</button></div>
+      </div>
       <p id="jb-status" class="muted small"></p>
       <div class="row end"><button id="jb-save" type="button">Save</button></div>
 

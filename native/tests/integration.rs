@@ -220,7 +220,7 @@ impl Host {
         // Pre-seed settings with test-specific JetBrains ports (never touch the real 10808/10809).
         std::fs::write(
             data.path().join("state.json"),
-            json!({"version":1,"settings":{"jetbrainsEnabled":true,"jetbrainsSocksPort":o.jb_socks,"jetbrainsHttpPort":o.jb_http,"passthroughWhenDisconnected":true,"debugLogging":true}}).to_string(),
+            json!({"version":1,"settings":{"jetbrainsEnabled":true,"jetbrainsSocksPort":o.jb_socks,"jetbrainsHttpPort":o.jb_http,"passthroughWhenDisconnected":true,"debugLogging":true,"ideAuth":false}}).to_string(),
         )
         .unwrap();
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_private-proxy-host"));
@@ -1138,4 +1138,128 @@ fn planted_dlls_are_not_loaded() {
     let out = Command::new(&exe).arg("--version").output().unwrap();
     assert!(out.status.success(), "helper failed next to planted DLLs: {:?}", out.status);
     assert!(String::from_utf8_lossy(&out.stdout).contains("private-proxy-host"));
+}
+
+/// HTTP proxy request with optional Basic credentials; returns the status line.
+fn http_proxy_with_auth(port: u16, host: &str, target_port: u16, auth: Option<(&str, &str)>) -> Result<String, String> {
+    use base64::Engine;
+    let mut s = TcpStream::connect(("127.0.0.1", port)).map_err(|e| e.to_string())?;
+    s.set_read_timeout(Some(Duration::from_secs(10))).ok();
+    let cred = auth.map(|(u, p)| format!("Proxy-Authorization: Basic {}\r\n", base64::engine::general_purpose::STANDARD.encode(format!("{u}:{p}")))).unwrap_or_default();
+    s.write_all(format!("GET http://{host}:{target_port}/x HTTP/1.1\r\nHost: {host}:{target_port}\r\n{cred}Connection: close\r\n\r\n").as_bytes())
+        .map_err(|e| e.to_string())?;
+    let mut line = String::new();
+    BufReader::new(s).read_line(&mut line).map_err(|e| e.to_string())?;
+    Ok(line.trim().to_string())
+}
+
+/// SOCKS5 with username/password (RFC 1929) or no auth; Ok(status line) or Err(reason).
+fn socks_with_auth(port: u16, host: &str, target_port: u16, auth: Option<(&str, &str)>) -> Result<String, String> {
+    let mut s = TcpStream::connect(("127.0.0.1", port)).map_err(|e| e.to_string())?;
+    s.set_read_timeout(Some(Duration::from_secs(10))).ok();
+    let method = if auth.is_some() { 2u8 } else { 0u8 };
+    s.write_all(&[5, 1, method]).map_err(|e| e.to_string())?;
+    let mut r = [0u8; 2];
+    s.read_exact(&mut r).map_err(|e| e.to_string())?;
+    if r[1] != method {
+        return Err(format!("method refused ({:#x})", r[1]));
+    }
+    if let Some((u, p)) = auth {
+        let mut m = vec![1, u.len() as u8];
+        m.extend_from_slice(u.as_bytes());
+        m.push(p.len() as u8);
+        m.extend_from_slice(p.as_bytes());
+        s.write_all(&m).map_err(|e| e.to_string())?;
+        let mut a = [0u8; 2];
+        s.read_exact(&mut a).map_err(|e| e.to_string())?;
+        if a[1] != 0 {
+            return Err("authentication failed".into());
+        }
+    }
+    let mut req = vec![5, 1, 0, 3, host.len() as u8];
+    req.extend_from_slice(host.as_bytes());
+    req.extend_from_slice(&target_port.to_be_bytes());
+    s.write_all(&req).map_err(|e| e.to_string())?;
+    let mut head = [0u8; 10];
+    s.read_exact(&mut head).map_err(|e| e.to_string())?;
+    if head[1] != 0 {
+        return Err(format!("socks error {}", head[1]));
+    }
+    s.write_all(format!("GET /x HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n").as_bytes()).map_err(|e| e.to_string())?;
+    let mut line = String::new();
+    BufReader::new(s).read_line(&mut line).map_err(|e| e.to_string())?;
+    Ok(line.trim().to_string())
+}
+
+/// The IDE endpoint requires the generated username/password (default on), in direct
+/// passthrough and in tunnel mode; the credentials stay out of every other API.
+#[test]
+fn ide_endpoint_requires_password() {
+    let _ = require_xray!();
+    let e = env().unwrap();
+    let o = opts(&e);
+    let mut h = Host::start(&o);
+    h.ok("hello", json!({"protocolVersion": 1, "extensionVersion": "test"}));
+    // The harness starts with ideAuth off; switch to the product default (on).
+    h.ok("setSettings", json!({"ideAuth": true}));
+    let c = h.ok("getIdeCredentials", json!({}));
+    let (user, pass) = (c["username"].as_str().unwrap().to_string(), c["password"].as_str().unwrap().to_string());
+    assert_eq!(c["required"], true);
+    assert!(pass.len() >= 20, "{c}");
+    let st = h.ok("getStatus", json!({}));
+    assert_eq!(st["jetbrains"]["authRequired"], true, "{st}");
+    assert!(!st.to_string().contains(&pass) && !h.ok("getDiagnostics", json!({})).to_string().contains(&pass));
+    assert!(!h.ok("getSettings", json!({})).to_string().contains(&pass));
+    assert_eq!(h.ok("getIdeCredentials", json!({}))["password"], pass.as_str(), "stable across calls");
+
+    let target = e.target.port;
+    let check_mode = |label: &str| {
+        let no = http_proxy_with_auth(o.jb_http, "127.0.0.1", target, None).unwrap_or_default();
+        assert!(no.contains("407"), "{label}: HTTP without credentials must get 407, got {no:?}");
+        let wrong = http_proxy_with_auth(o.jb_http, "127.0.0.1", target, Some((&user, "wrong-password"))).unwrap_or_default();
+        assert!(wrong.contains("407"), "{label}: wrong password must get 407, got {wrong:?}");
+        let ok = http_proxy_with_auth(o.jb_http, "127.0.0.1", target, Some((&user, &pass))).unwrap();
+        assert!(ok.contains("204"), "{label}: correct credentials must work, got {ok:?}");
+        assert!(socks_with_auth(o.jb_socks, "127.0.0.1", target, None).is_err(), "{label}: SOCKS without credentials must fail");
+        assert!(socks_with_auth(o.jb_socks, "127.0.0.1", target, Some((&user, "nope"))).is_err(), "{label}: wrong SOCKS password must fail");
+        assert!(socks_with_auth(o.jb_socks, "127.0.0.1", target, Some((&user, &pass))).unwrap().contains("204"), "{label}: SOCKS with credentials");
+    };
+    assert!(port_open(o.jb_http));
+    check_mode("direct");
+
+    // Tunnel mode: IDE ports require the password; the browser port does not (Chromium cannot send it).
+    let (_, link) = links(&e).remove(1); // VLESS WS
+    let imp = h.ok("importText", json!({"text": link, "source": "paste"}));
+    let st = h.connect_and_wait(imp["serverIds"][0].as_str().unwrap());
+    assert_eq!(st["state"], "connected", "{st}");
+    check_mode("tunnel");
+    let bp = st["proxy"]["port"].as_u64().unwrap() as u16;
+    assert_eq!(get_via_socks(bp, "probe.test", e.target.port).unwrap(), "HTTP/1.1 204 No Content");
+    assert!(http_proxy_with_auth(o.jb_http, "probe.test", e.target.port, Some((&user, &pass))).unwrap().contains("204"));
+
+    // Regenerating invalidates the old password.
+    h.ok("disconnect", json!({}));
+    h.wait_status("disconnected", Duration::from_secs(10), |s| s["state"] == "disconnected");
+    let n = h.ok("regenerateIdeCredentials", json!({}));
+    let new_pass = n["password"].as_str().unwrap().to_string();
+    assert_ne!(new_pass, pass);
+    assert!(ports_ready(o.jb_http));
+    assert!(http_proxy_with_auth(o.jb_http, "127.0.0.1", target, Some((&user, &pass))).unwrap_or_default().contains("407"));
+    assert!(http_proxy_with_auth(o.jb_http, "127.0.0.1", target, Some((&user, &new_pass))).unwrap().contains("204"));
+
+    // Turning it off gives an open endpoint again (user's explicit choice).
+    h.ok("setSettings", json!({"ideAuth": false}));
+    assert!(ports_ready(o.jb_http));
+    assert!(http_proxy_with_auth(o.jb_http, "127.0.0.1", target, None).unwrap().contains("204"));
+}
+
+fn ports_ready(port: u16) -> bool {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline {
+        if port_open(port) {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    false
 }

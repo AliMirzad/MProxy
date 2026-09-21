@@ -81,10 +81,14 @@ const portOpen = (port) =>
   });
 
 /** GET an absolute URL through an HTTP proxy, like an IDE configured with an HTTP proxy. */
-function viaHttpProxy(proxyPort, url) {
+// IDE endpoint credentials (the endpoint requires a password by default); set after reading them
+// from the extension.
+let ideCred = null;
+function viaHttpProxy(proxyPort, url, cred = ideCred) {
   return new Promise((res) => {
     const u = new URL(url);
-    const s = net.connect(proxyPort, '127.0.0.1', () => s.write(`GET ${url} HTTP/1.1\r\nHost: ${u.host}\r\nConnection: close\r\n\r\n`));
+    const auth = cred ? `Proxy-Authorization: Basic ${Buffer.from(`${cred.username}:${cred.password}`).toString('base64')}\r\n` : '';
+    const s = net.connect(proxyPort, '127.0.0.1', () => s.write(`GET ${url} HTTP/1.1\r\nHost: ${u.host}\r\n${auth}Connection: close\r\n\r\n`));
     let buf = '';
     s.on('data', (d) => (buf += d));
     s.on('end', () => res(buf));
@@ -220,6 +224,13 @@ try {
   await popup.click('#jb-save');
   await waitFor(async () => (await popup.textContent('#settings-result'))?.includes('Saved'), 'settings saved');
   check('IDE endpoint (direct passthrough) listening while disconnected', await waitFor(() => portOpen(jbHttp), 'jb port', 10000));
+  const credR = await popup.evaluate(() => chrome.runtime.sendMessage({ type: 'request', cmd: 'getIdeCredentials', args: {} }));
+  ideCred = credR.result;
+  check('IDE endpoint password is on by default', credR.ok && ideCred.required === true && ideCred.password.length >= 20);
+  const noPass = await viaHttpProxy(jbHttp, `http://127.0.0.1:${server.targetPort}/`, null);
+  check('IDE endpoint refuses requests without the password (407)', /^HTTP\/1\.[01] 407/.test(noPass), noPass.split('\r\n')[0]);
+  const withPass = await viaHttpProxy(jbHttp, `http://127.0.0.1:${server.targetPort}/`);
+  check('IDE endpoint works with the password', withPass.includes(MARKER), withPass.split('\r\n')[0]);
   await popup.click('#nav-back');
 
   // 4. Import via the UI.
@@ -234,7 +245,10 @@ try {
   check('import 4 servers via popup', imported.includes('Imported: 4 new'), imported);
   await shot(popup, '02-import');
   await popup.click('#nav-back');
-  const names = await popup.$$eval('#server-list .name', (els) => els.map((e) => e.textContent));
+  const names = await popup.$$eval('#server-select option', (els) => els.map((e) => e.textContent.replace(/^● /, '')));
+  check('no server list below the dropdowns (dropdown only)', (await popup.$('#server-list')) === null);
+  const filters = await popup.$$eval('#server-filter option', (els) => els.map((e) => e.textContent));
+  check('filter dropdown offers all / manually added', filters[0] === 'All servers (4)' && filters[1] === 'Manually added (4)', filters.join(', '));
   check('server list shows imported names', names.includes('E2E Reality') && names.includes('E2E VMess WS'), names.join(', '));
   const listText = await popup.evaluate(() => document.body.innerText);
   check('popup does not expose the user ID', !listText.includes('5783a3e7'));

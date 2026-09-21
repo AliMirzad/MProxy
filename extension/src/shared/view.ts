@@ -1,5 +1,5 @@
 // Pure mapping from service-worker state to what the popup shows. Unit-tested.
-import type { ApiError, ServerSummary } from '../../../shared/protocol/types';
+import type { ApiError, ServerList, ServerSummary } from '../../../shared/protocol/types';
 import type { AppState } from './app-state';
 
 export type Tone = 'ok' | 'busy' | 'idle' | 'error';
@@ -105,4 +105,43 @@ export function currentServerId(s: AppState, selected: string | null): string | 
   const st = s.status;
   if (st && (st.state === 'connected' || st.state === 'connecting') && st.serverId) return st.serverId;
   return selected;
+}
+
+// ------------------------------------------------------------------ server list filter
+
+/** "all", "manual" (imported by hand: links, JSON, QR) or "sub:<subscription id>". */
+export type ServerFilter = string;
+
+export interface FilterOption {
+  value: ServerFilter;
+  label: string;
+}
+
+export function filterOptions(list: ServerList): FilterOption[] {
+  const manual = list.servers.filter((s) => !s.subscriptionId).length;
+  const opts: FilterOption[] = [
+    { value: 'all', label: `All servers (${list.servers.length})` },
+    { value: 'manual', label: `Manually added (${manual})` },
+  ];
+  for (const sub of list.subscriptions) {
+    const n = list.servers.filter((s) => s.subscriptionId === sub.id).length;
+    opts.push({ value: `sub:${sub.id}`, label: `Subscription: ${sub.name} (${n})` });
+  }
+  return opts;
+}
+
+/** Unknown filters (e.g. a deleted subscription) fall back to "all". */
+export function normalizeFilter(list: ServerList, f: ServerFilter | null | undefined): ServerFilter {
+  if (f === 'manual') return f;
+  if (f && f.startsWith('sub:') && list.subscriptions.some((s) => `sub:${s.id}` === f)) return f;
+  return 'all';
+}
+
+export function filterServers(list: ServerList, f: ServerFilter): ServerSummary[] {
+  if (f === 'manual') return list.servers.filter((s) => !s.subscriptionId);
+  if (f.startsWith('sub:')) {
+    const id = f.slice(4);
+    return list.servers.filter((s) => s.subscriptionId === id);
+  }
+  return list.servers;
 }
