@@ -1467,3 +1467,122 @@ fn weakened_data_folder_blocks_connection() {
     assert!(m.starts_with("Runtime security check failed") && m.contains("grants access"), "{m}");
     assert!(h.ok("getDiagnostics", json!({}))["xrayPid"].is_null());
 }
+
+/// Adversarial checks of the IDE endpoint authentication: randomness, brute force, malformed
+/// Proxy-Authorization / SOCKS auth, stability, and that neither the IDE nor the browser
+/// credentials are logged or stored in plaintext.
+#[test]
+fn ide_auth_adversarial() {
+    use base64::Engine;
+    let _ = require_xray!();
+    let e = env().unwrap();
+    let o = opts(&e);
+    let mut h = Host::start(&o);
+    h.ok("hello", json!({"protocolVersion": 3, "extensionVersion": "test"}));
+    h.ok("setSettings", json!({"ideAuth": true}));
+    assert!(ports_ready(o.jb_http));
+
+    // Randomness: regenerated passwords are distinct, 24 chars from the 57-symbol alphabet.
+    let alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+    let mut seen = std::collections::HashSet::new();
+    for _ in 0..20 {
+        let p = h.ok("regenerateIdeCredentials", json!({}))["password"].as_str().unwrap().to_string();
+        assert_eq!(p.len(), 24);
+        assert!(p.chars().all(|c| alphabet.contains(c)), "{p}");
+        assert!(seen.insert(p));
+    }
+    let c = h.ok("getIdeCredentials", json!({}));
+    let (user, pass) = (c["username"].as_str().unwrap().to_string(), c["password"].as_str().unwrap().to_string());
+    assert!(ports_ready(o.jb_http));
+    let target = e.target.port;
+    let pid_before = h.ok("getDiagnostics", json!({}))["xrayPid"].clone();
+
+    // Malformed Proxy-Authorization headers: never let through, never crash.
+    let b64 = |s: &str| base64::engine::general_purpose::STANDARD.encode(s);
+    let long = "A".repeat(64 * 1024);
+    let malformed = vec![
+        "Basic".to_string(),
+        "Basic ".to_string(),
+        "Basic !!!!".to_string(),
+        format!("Basic {}", b64("nocolon")),
+        format!("Basic {}", b64(&format!("{user}:"))),
+        format!("Basic {}", b64(&format!(":{pass}"))),
+        format!("Basic {}", b64(&format!("{user}:{pass}x"))),
+        format!("Basic {}", b64(&format!("{user}x:{pass}"))),
+        format!("Basic {}", b64(&format!("{user}:{}", &pass[..23]))),
+        format!("Bearer {pass}"),
+        format!("Basic {long}"),
+        format!("Basic {}", b64(&format!("{user}:{pass}\0"))),
+        format!("basic {}", b64(&format!("{user}:{}", pass.to_uppercase()))),
+    ];
+    for hdr in &malformed {
+        let mut s = TcpStream::connect(("127.0.0.1", o.jb_http)).unwrap();
+        s.set_read_timeout(Some(Duration::from_secs(10))).ok();
+        let _ = s.write_all(format!("GET http://127.0.0.1:{target}/x HTTP/1.1\r\nHost: 127.0.0.1:{target}\r\nProxy-Authorization: {hdr}\r\nConnection: close\r\n\r\n").as_bytes());
+        let mut line = String::new();
+        let _ = BufReader::new(s).read_line(&mut line);
+        assert!(!line.contains(" 2"), "malformed header let through: {}… -> {line:?}", hdr.chars().take(40).collect::<String>());
+    }
+    // Malformed SOCKS username/password auth.
+    for payload in [vec![1u8, 0, 0], vec![1, 255], vec![1, 12, b'p', b'r'], vec![9, 1, b'x', 1, b'y'], vec![1, 3, b'a', b'b', b'c', 0]] {
+        let mut s = TcpStream::connect(("127.0.0.1", o.jb_socks)).unwrap();
+        s.set_read_timeout(Some(Duration::from_secs(3))).ok();
+        let _ = s.write_all(&[5, 1, 2]);
+        let mut r = [0u8; 2];
+        let _ = s.read_exact(&mut r);
+        let _ = s.write_all(&payload);
+        let mut a = [0u8; 2];
+        let ok = s.read_exact(&mut a).is_ok() && a == [1, 0];
+        assert!(!ok, "malformed SOCKS auth accepted: {payload:?}");
+    }
+
+    // Brute force: 8 threads x 100 wrong passwords on HTTP and SOCKS.
+    let started = Instant::now();
+    let handles: Vec<_> = (0..8)
+        .map(|t| {
+            let (u, port_h, port_s) = (user.clone(), o.jb_http, o.jb_socks);
+            std::thread::spawn(move || {
+                let mut hits = 0;
+                for i in 0..100 {
+                    let guess = format!("guess-{t}-{i}-xxxxxxxxxxxx");
+                    if http_proxy_with_auth(port_h, "127.0.0.1", target, Some((&u, &guess))).unwrap_or_default().contains(" 2") {
+                        hits += 1;
+                    }
+                    if i % 4 == 0 && socks_with_auth(port_s, "127.0.0.1", target, Some((&u, &guess))).is_ok() {
+                        hits += 1;
+                    }
+                }
+                hits
+            })
+        })
+        .collect();
+    let hits: usize = handles.into_iter().map(|j| j.join().unwrap()).sum();
+    eprintln!("brute force: 1000 attempts in {:?}, {hits} accepted", started.elapsed());
+    assert_eq!(hits, 0);
+    // Still healthy, same Xray process, correct credentials still work.
+    assert_eq!(h.ok("getDiagnostics", json!({}))["xrayPid"], pid_before, "Xray restarted or crashed under brute force");
+    assert!(http_proxy_with_auth(o.jb_http, "127.0.0.1", target, Some((&user, &pass))).unwrap().contains("204"));
+    assert!(socks_with_auth(o.jb_socks, "127.0.0.1", target, Some((&user, &pass))).unwrap().contains("204"));
+
+    // Tunnel mode: browser credentials in play as well.
+    let (_, link) = links(&e).remove(1);
+    let imp = h.ok("importText", json!({"text": link, "source": "paste"}));
+    let st = h.connect_and_wait(imp["serverIds"][0].as_str().unwrap());
+    assert_eq!(st["state"], "connected", "{st}");
+    let browser_pass = st["proxy"]["password"].as_str().unwrap().to_string();
+    assert_eq!(browser_pass.len(), 24);
+
+    // Nothing sensitive in the log (debug logging is on in the harness) or in plaintext files.
+    let data = PathBuf::from(h.ok("getDiagnostics", json!({}))["dataDir"].as_str().unwrap());
+    let log = h.log();
+    let state = std::fs::read_to_string(data.join("state.json")).unwrap();
+    let secrets = std::fs::read(data.join("secrets.bin")).unwrap();
+    for (what, secret) in [("IDE password", &pass), ("browser password", &browser_pass)] {
+        assert!(!log.contains(secret.as_str()), "{what} in the helper log");
+        assert!(!state.contains(secret.as_str()), "{what} in state.json");
+        assert!(!secrets.windows(secret.len()).any(|w| w == secret.as_bytes()), "{what} in plaintext in secrets.bin");
+    }
+    assert!(!h.ok("getSettings", json!({})).to_string().contains(&pass));
+    assert!(!h.ok("getDiagnostics", json!({})).to_string().contains(&pass));
+    assert!(!h.ok("listServers", json!({})).to_string().contains(&browser_pass));
+}
