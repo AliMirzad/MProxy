@@ -6,6 +6,9 @@
 //  * On any other state, on helper exit, on service-worker start, the proxy is cleared
 //    (fail-open to direct: there is intentionally no kill switch in V1).
 //  * UI requests are forwarded only if the command is in UI_COMMANDS.
+//  * The UI never says "connected" while our proxy setting is not in effect: if another
+//    extension or a policy takes over the browser proxy, the tunnel is disconnected and the
+//    reason is shown (proxyControlChanged).
 
 import { HOST_NAME, UI_COMMANDS, type ApiError, type CommandName, type HelloResult, type NativeEvent, type NativeResponse, type NativeStatus } from '../../../shared/protocol/types';
 import { EXTENSION_PROTOCOL_VERSION, type AppState, type RuntimeState } from '../shared/app-state';
@@ -22,6 +25,8 @@ export interface ProxyControl {
   set(port: number): Promise<string | null>;
   /** Remove our proxy setting (browser goes direct). */
   clear(): Promise<void>;
+  /** Null if our setting is the one in effect, otherwise why not. */
+  controlProblem(): Promise<string | null>;
 }
 
 export interface WebRtcControl {
@@ -265,6 +270,25 @@ export class Controller {
         if (status.state === 'disconnected') this.state.proxyError = null;
       }
       this.emit();
+    });
+  }
+
+  /**
+   * chrome.proxy.settings changed (by us, another extension, or policy). If the tunnel is up but
+   * our setting is no longer the one in effect, browser traffic is not going through the tunnel:
+   * disconnect and say why, instead of continuing to show "connected".
+   */
+  proxyControlChanged(): void {
+    void this.enqueueProxy(async () => {
+      if (!this.state.browserProxied) return;
+      const problem = await this.deps.proxy.controlProblem();
+      if (!problem) return;
+      this.state.browserProxied = false;
+      this.state.proxyError = `${problem} The tunnel was disconnected.`;
+      await this.deps.proxy.clear();
+      await this.deps.webrtc.apply(false);
+      this.emit();
+      void this.send("disconnect", {});
     });
   }
 

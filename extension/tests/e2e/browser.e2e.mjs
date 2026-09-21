@@ -17,7 +17,7 @@
 // The user's own browser profile is never touched.
 import { chromium } from 'playwright-core';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -114,14 +114,56 @@ const env = { ...process.env, PRIVATE_PROXY_TEST_MODE: '1', PRIVATE_PROXY_ALLOW_
 let server;
 let context;
 
+// A second, hostile extension loaded next to ours. It tries every way an extension could reach
+// the privileged side: native messaging to our host, runtime messages and a port to our
+// extension (pretending to be the popup).
+const attackerDir = join(tmp, 'attacker-ext');
+mkdirSync(attackerDir, { recursive: true });
+writeFileSync(join(attackerDir, 'manifest.json'), JSON.stringify({
+  manifest_version: 3, name: 'E2E attacker', version: '1.0', permissions: ['nativeMessaging'], background: { service_worker: 'sw.js' },
+}));
+writeFileSync(join(attackerDir, 'sw.js'), `
+const VICTIM = ${JSON.stringify(extId)};
+globalThis.attack = async () => {
+  const out = {};
+  await new Promise((resolve) => {
+    try {
+      const p = chrome.runtime.connectNative('com.privateproxy.host');
+      p.onMessage.addListener(() => { out.native = 'GOT A MESSAGE FROM THE HOST'; });
+      p.onDisconnect.addListener(() => { out.native = out.native || ('disconnected: ' + (chrome.runtime.lastError?.message || '')); resolve(); });
+      p.postMessage({ id: 1, cmd: 'connect', args: { serverId: '00000000-0000-4000-8000-000000000000' } });
+    } catch (e) { out.native = 'threw: ' + e.message; resolve(); }
+    setTimeout(resolve, 5000);
+  });
+  try {
+    out.message = JSON.stringify(await chrome.runtime.sendMessage(VICTIM, { type: 'request', cmd: 'disconnect', args: {} }));
+  } catch (e) { out.message = 'error: ' + e.message; }
+  await new Promise((resolve) => {
+    try {
+      const port = chrome.runtime.connect(VICTIM, { name: 'popup' });
+      port.onMessage.addListener(() => { out.port = 'GOT STATE FROM VICTIM'; resolve(); });
+      port.onDisconnect.addListener(() => { out.port = out.port || ('disconnected: ' + (chrome.runtime.lastError?.message || '')); resolve(); });
+      port.postMessage({ type: 'request', cmd: 'disconnect', args: {} });
+    } catch (e) { out.port = 'threw: ' + e.message; resolve(); }
+    setTimeout(resolve, 3000);
+  });
+  return out;
+};
+`);
+
 async function launch() {
   const ctx = await chromium.launchPersistentContext(profileDir, {
     executablePath: browserPath,
     headless: !headed,
     env,
-    args: [`--disable-extensions-except=${extDist}`, `--load-extension=${extDist}`, '--no-first-run', '--no-default-browser-check', '--disable-features=BraveRewards'],
+    args: [`--disable-extensions-except=${extDist},${attackerDir}`, `--load-extension=${extDist},${attackerDir}`, '--no-first-run', '--no-default-browser-check', '--disable-features=BraveRewards'],
   });
-  const sw = ctx.serviceWorkers().find((w) => w.url().includes(extId)) ?? (await ctx.waitForEvent('serviceworker', { timeout: 15000 }).catch(() => null));
+  const deadline = Date.now() + 15000;
+  let sw = null;
+  while (!sw && Date.now() < deadline) {
+    sw = ctx.serviceWorkers().find((w) => w.url().includes(extId)) ?? null;
+    if (!sw) await ctx.waitForEvent('serviceworker', { timeout: 2000 }).catch(() => null);
+  }
   if (!sw || !sw.url().includes(extId)) {
     await ctx.close();
     throw new Error(`The extension did not load (expected ID ${extId}). This browser may ignore --load-extension (Chrome 137+ branded builds do); use Chromium/Brave or load it manually.`);
@@ -228,6 +270,57 @@ try {
   check('chrome.proxy uses loopback SOCKS5', pst.value.rules.singleProxy.host === '127.0.0.1' && pst.value.rules.singleProxy.scheme === 'socks5', JSON.stringify(pst.value.rules.singleProxy));
   const badge = await sw.evaluate(() => chrome.action.getBadgeText({}));
   check('toolbar badge shows ON', badge === 'ON');
+
+  // Security: the installed runtime (not the build tree) runs Xray verified and isolated.
+  {
+    const d0 = await popup.evaluate(() => chrome.runtime.sendMessage({ type: 'request', cmd: 'getDiagnostics', args: {} }));
+    check('installed Xray verified against the pinned SHA-256', d0.result.xrayVerified === true);
+    if (process.platform === 'win32') {
+      const iso = d0.result.xrayIsolation || {};
+      check('installed Xray runs at Low integrity, child processes blocked', iso.integrity === 'low' && iso.childProcessesBlocked === true, JSON.stringify(iso));
+      const acl = spawnSync(join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'icacls.exe'), [runtimeDir], { encoding: 'utf8' }).stdout || '';
+      const broad = /(Everyone|BUILTIN\\Users|Authenticated Users|NT AUTHORITY\\INTERACTIVE):/i.test(acl);
+      check('runtime directory is not writable by other users (private ACL)', !broad && /SYSTEM/.test(acl), acl.replace(/\s+/g, ' ').slice(0, 200));
+    }
+  }
+
+  // Security: a hostile web page cannot reach the extension or drive the tunnel.
+  {
+    const evil = await ctx.newPage();
+    await evil.goto(`http://127.0.0.1:${server.targetPort}/`);
+    const r = await evil.evaluate(async ({ id, jb }) => {
+      const out = {};
+      out.runtime = typeof globalThis.chrome?.runtime?.sendMessage;
+      try {
+        await globalThis.chrome.runtime.sendMessage(id, { type: 'request', cmd: 'disconnect', args: {} });
+        out.send = 'sent';
+      } catch (e) { out.send = 'error: ' + e.message; }
+      try { await fetch(`chrome-extension://${id}/popup.html`); out.resource = 'readable'; } catch { out.resource = 'blocked'; }
+      try { const t = await (await fetch(`http://127.0.0.1:${jb}/`)).text(); out.ide = t.slice(0, 40); } catch { out.ide = 'blocked'; }
+      window.postMessage({ type: 'request', cmd: 'disconnect', args: {} }, '*');
+      return out;
+    }, { id: extId, jb: jbHttp });
+    await evil.close();
+    check('web page has no chrome.runtime messaging channel to the extension', r.runtime !== 'function' || r.send.startsWith('error'), JSON.stringify(r));
+    check('web page cannot load extension resources', r.resource === 'blocked', r.resource);
+    check('web page cannot use the IDE endpoint as a relay to the extension or helper', !String(r.ide).includes(MARKER), String(r.ide));
+    await popup.waitForTimeout(500);
+    check('tunnel unaffected by the hostile page', (await popupState(popup)) === 'Connected');
+  }
+
+  // Security: a second, hostile extension cannot use our native host or our extension.
+  {
+    const attacker = ctx.serviceWorkers().find((w) => !w.url().includes(extId));
+    check('attacker extension loaded next to ours', !!attacker, ctx.serviceWorkers().map((w) => w.url()).join(' '));
+    if (attacker) {
+      const r = await attacker.evaluate(() => globalThis.attack());
+      check('other extension is refused by the native host (allowed_origins)', /forbidden/i.test(r.native) && !r.native.includes('GOT'), r.native);
+      check('other extension cannot message our extension', String(r.message).startsWith('error') || r.message === undefined || r.message === 'undefined', r.message);
+      check('other extension cannot connect to our extension as the popup', !String(r.port).includes('GOT'), r.port);
+      await popup.waitForTimeout(500);
+      check('tunnel unaffected by the hostile extension', (await popupState(popup)) === 'Connected');
+    }
+  }
 
   // IDE endpoint through the tunnel.
   const viaIde = await viaHttpProxy(jbHttp, server.probeUrl);

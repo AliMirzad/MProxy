@@ -73,4 +73,8 @@ chrome.runtime.onMessage.addListener((raw: unknown, sender, sendResponse) => {
   }
 });
 
+// Another extension or a policy can take over the browser proxy at any time; never keep showing
+// "connected" when our setting is no longer in effect.
+chrome.proxy.settings.onChange.addListener(() => controller.proxyControlChanged());
+
 void controller.start();

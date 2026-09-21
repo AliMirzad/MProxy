@@ -110,6 +110,9 @@ pub fn install(o: &InstallOptions) -> Result<Vec<String>, String> {
     if o.extension_ids.is_empty() || !o.extension_ids.iter().all(|i| valid_extension_id(i)) {
         return Err("invalid extension id".into());
     }
+    if crate::harden::is_link(&o.target_dir) {
+        return Err(format!("{} is a link or junction; refusing to install there", o.target_dir.display()));
+    }
     let mut log = Vec::new();
     if o.register_only {
         let host = o.target_dir.join(host_exe_name());
@@ -125,8 +128,15 @@ pub fn install(o: &InstallOptions) -> Result<Vec<String>, String> {
         return Ok(log);
     }
     let xray_src = find_xray(&o.source_dir).ok_or_else(|| format!("Xray binary not found next to the installer in {}", o.source_dir.display()))?;
+    // Refuse to install anything but the pinned Xray build.
+    drop(crate::xray::verify(&xray_src).map_err(|e| format!("{}: {e}", xray_src.display()))?);
     let xray_dir = o.target_dir.join("xray");
     fs::create_dir_all(&xray_dir).map_err(|e| format!("cannot create {}: {e}", xray_dir.display()))?;
+    // Only this user (and SYSTEM/Administrators) may modify the executables, whatever the
+    // permissions of the chosen parent directory.
+    if let Err(e) = crate::harden::restrict_install_dir(&o.target_dir) {
+        log.push(format!("warning: could not restrict permissions of {}: {e}", o.target_dir.display()));
+    }
     cleanup_old(&o.target_dir);
     cleanup_old(&xray_dir);
 
@@ -170,8 +180,14 @@ pub fn uninstall(target_dir: &Path, purge: bool) -> Result<Vec<String>, String> 
     if purge {
         let data = paths::data_dir();
         let _ = crate::secrets::KeyringProvider.delete_key();
-        let _ = fs::remove_dir_all(&data);
-        let _ = fs::remove_dir_all(paths::log_dir());
+        // Only fixed product paths are deleted, and a link is removed itself, never followed.
+        for d in [data.clone(), paths::log_dir()] {
+            if crate::harden::is_link(&d) {
+                let _ = fs::remove_dir(&d).or_else(|_| fs::remove_file(&d));
+            } else {
+                let _ = fs::remove_dir_all(&d);
+            }
+        }
         log.push(format!("Removed servers, credentials and logs ({})", data.display()));
     } else {
         log.push(format!("Kept imported servers in {} (run `uninstall --purge` to remove them)", paths::data_dir().display()));
@@ -234,13 +250,21 @@ mod platform {
             log.push(format!("Removed {}", target_dir.display()));
             return;
         }
-        // We are probably running from inside target_dir: delete after we exit.
+        // We are probably running from inside target_dir: delete after we exit. Absolute System32
+        // paths and a System32 working directory, so nothing next to the helper can run instead.
         use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         const DETACHED_PROCESS: u32 = 0x0000_0008;
-        let cmd = format!("ping -n 3 127.0.0.1 >NUL & rmdir /S /Q \"{}\"", target_dir.display());
-        let _ = std::process::Command::new("cmd.exe")
-            .raw_arg(format!("/C {cmd}"))
+        let sys32 = PathBuf::from(std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into())).join("System32");
+        let target = target_dir.display().to_string();
+        if target.contains(['"', '%', '&', '|', '^', '<', '>', '!']) {
+            log.push(format!("Please delete {target} manually"));
+            return;
+        }
+        let cmd = format!("\"{}\" -n 3 127.0.0.1 >NUL & rmdir /S /Q \"{target}\"", sys32.join("PING.EXE").display());
+        let _ = std::process::Command::new(sys32.join("cmd.exe"))
+            .raw_arg(format!("/D /C \"{cmd}\""))
+            .current_dir(&sys32)
             .creation_flags(CREATE_NO_WINDOW | DETACHED_PROCESS)
             .spawn();
         log.push(format!("Scheduled removal of {} (close all browsers if it remains)", target_dir.display()));

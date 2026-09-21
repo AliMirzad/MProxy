@@ -54,6 +54,11 @@ export const chromeProxy: ProxyControl = {
   async clear() {
     await chrome.proxy.settings.clear({ scope: 'regular' });
   },
+  async controlProblem() {
+    const now = await chrome.proxy.settings.get({ incognito: false });
+    if (now.levelOfControl === 'controlled_by_this_extension') return null;
+    return controlProblem(now.levelOfControl) ?? 'The browser proxy setting is no longer controlled by Private Proxy.';
+  },
 };
 
 export const chromeWebRtc: WebRtcControl = {

@@ -32,6 +32,7 @@ const jb = { enabled: true, mode: 'direct' as const, socksPort: 10808, httpPort:
 const status = (s: Partial<NativeStatus>): NativeStatus => ({ state: 'disconnected', jetbrains: jb, xrayAvailable: true, ...s });
 
 function setup(opts: { proxyError?: string | null; connectThrows?: boolean; lastError?: string; helloError?: { code: string; message: string } } = {}) {
+  let controlProblem: string | null = null;
   const ports: FakePort[] = [];
   const log: string[] = [];
   const timers: { cb: () => void; ms: number }[] = [];
@@ -57,6 +58,7 @@ function setup(opts: { proxyError?: string | null; connectThrows?: boolean; last
       clear: async () => {
         log.push('clear');
       },
+      controlProblem: async () => controlProblem,
     },
     webrtc: { apply: async (p) => void log.push(`webrtc:${p}`) },
     webrtcEnabled: async () => true,
@@ -73,7 +75,7 @@ function setup(opts: { proxyError?: string | null; connectThrows?: boolean; last
     },
   };
   const c = new Controller(deps);
-  return { c, ports, log, timers, states, setLastError: (e: string) => (lastError = e) };
+  return { c, ports, log, timers, states, setLastError: (e: string) => (lastError = e), setControlProblem: (p: string | null) => (controlProblem = p) };
 }
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
@@ -159,6 +161,28 @@ describe('Controller', () => {
     await e.c.idle();
     expect(e.c.state.proxyError).toMatch(/Another extension/);
     expect(e.c.state.browserProxied).toBe(false);
+    expect(p.sent.some((m) => m.cmd === 'disconnect')).toBe(true);
+  });
+
+  it('never keeps showing connected after another extension takes over the proxy', async () => {
+    await env.c.start();
+    await tick();
+    const p = env.ports[0];
+    p.deliver({ event: 'status', status: status({ state: 'connected', serverId: 'a', proxy: { scheme: 'socks5', host: '127.0.0.1', port: 5555 } }) });
+    await env.c.idle();
+    // Our own change (set) fires onChange too: nothing happens while we are in control.
+    env.c.proxyControlChanged();
+    await env.c.idle();
+    expect(env.c.state.browserProxied).toBe(true);
+    expect(p.sent.some((m) => m.cmd === 'disconnect')).toBe(false);
+    // Another extension takes over.
+    env.setControlProblem('Another extension controls the browser proxy.');
+    env.log.length = 0;
+    env.c.proxyControlChanged();
+    await env.c.idle();
+    expect(env.c.state.browserProxied).toBe(false);
+    expect(env.c.state.proxyError).toMatch(/Another extension.*disconnected/);
+    expect(env.log).toEqual(['clear', 'webrtc:false']);
     expect(p.sent.some((m) => m.cmd === 'disconnect')).toBe(true);
   });
 

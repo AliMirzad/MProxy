@@ -7,5 +7,5 @@ set -eu
 DIR="$(cd "$(dirname "$0")" && pwd)"
 # Gatekeeper blocks quarantined unsigned binaries; this package is for internal distribution.
 /usr/bin/xattr -dr com.apple.quarantine "$DIR" 2>/dev/null || true
-chmod +x "$DIR/private-proxy-host" "$DIR/xray/xray"
+/bin/chmod 755 "$DIR/private-proxy-host" "$DIR/xray/xray"
 exec "$DIR/private-proxy-host" install "$@"

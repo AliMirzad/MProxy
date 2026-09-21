@@ -41,6 +41,19 @@ pub fn restrict_dir(dir: &Path) -> std::io::Result<()> {
     }
 }
 
+/// Install directory of the runtime: writable only by this user, SYSTEM and Administrators
+/// (readable/executable as usual). Windows only; on macOS the per-user install lives in the
+/// user-only Library folder and the .pkg installs root-owned files.
+pub fn restrict_install_dir(dir: &Path) -> std::io::Result<()> {
+    #[cfg(windows)]
+    return win::set_dacl(dir, &format!("D:P(A;OICI;FA;;;{})(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)", win::current_user_sid()?), false);
+    #[cfg(not(windows))]
+    {
+        let _ = dir;
+        Ok(())
+    }
+}
+
 pub fn restrict_file(p: &Path) {
     #[cfg(unix)]
     {
@@ -145,14 +158,17 @@ pub(crate) mod win {
 
     pub fn restrict_dir(dir: &Path) -> std::io::Result<()> {
         let sid = current_user_sid()?;
+        set_dacl(dir, &format!("D:P(A;OICI;FA;;;{sid})(A;OICI;FA;;;SY)S:(ML;OICI;NRNWNX;;;ME)"), true)
+    }
+
+    pub fn set_dacl(dir: &Path, sddl: &str, with_label: bool) -> std::io::Result<()> {
         // D:P            protected DACL (no inheritance from the profile)
         // (A;OICI;FA;;;<user>) (A;OICI;FA;;;SY)   full control: this user and SYSTEM only
         // S:(ML;OICI;NRNWNX;;;ME)                 Medium label, no read/write/execute up:
         //                                         Low-integrity processes (Xray) cannot read it
-        let sddl = format!("D:P(A;OICI;FA;;;{sid})(A;OICI;FA;;;SY)S:(ML;OICI;NRNWNX;;;ME)");
         unsafe {
             let mut sd: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
-            let w = wide(std::ffi::OsStr::new(&sddl));
+            let w = wide(std::ffi::OsStr::new(sddl));
             if ConvertStringSecurityDescriptorToSecurityDescriptorW(w.as_ptr(), SDDL_REVISION_1, &mut sd, std::ptr::null_mut()) == 0 {
                 return Err(std::io::Error::last_os_error());
             }
@@ -165,7 +181,7 @@ pub(crate) mod win {
             let rc = SetNamedSecurityInfoW(
                 path.as_ptr(),
                 SE_FILE_OBJECT,
-                DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION | LABEL_SECURITY_INFORMATION,
+                DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION | if with_label { LABEL_SECURITY_INFORMATION } else { 0 },
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
                 dacl,

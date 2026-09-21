@@ -27,7 +27,7 @@ RT="/Library/Application Support/PrivateProxy/runtime"
 /usr/bin/xattr -dr com.apple.quarantine "$RT" 2>/dev/null || true
 CONSOLE_USER="$(/usr/bin/stat -f%Su /dev/console)"
 if [ -n "$CONSOLE_USER" ] && [ "$CONSOLE_USER" != "root" ]; then
-  USER_HOME="$(/usr/bin/dscl . -read "/Users/$CONSOLE_USER" NFSHomeDirectory | awk '{print $2}')"
+  USER_HOME="$(/usr/bin/dscl . -read "/Users/$CONSOLE_USER" NFSHomeDirectory | /usr/bin/awk '{print $2}')"
   /usr/bin/sudo -u "$CONSOLE_USER" HOME="$USER_HOME" "$RT/private-proxy-host" install --register-only --target "$RT" || true
 fi
 exit 0

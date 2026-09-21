@@ -109,6 +109,8 @@ export interface Settings {
   jetbrainsHttpPort: number;
   passthroughWhenDisconnected: boolean;
   debugLogging: boolean;
+  /** Allow subscription URLs on private networks (company-internal servers). Default off. */
+  allowPrivateSubscriptionHosts: boolean;
 }
 
 /** Commands the UI may send, with their argument types. */

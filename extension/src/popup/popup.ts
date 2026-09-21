@@ -354,6 +354,7 @@ async function loadSettings() {
     $<HTMLInputElement>('jb-socks').value = String(s.jetbrainsSocksPort);
     $<HTMLInputElement>('jb-passthrough').checked = s.passthroughWhenDisconnected;
     $<HTMLInputElement>('debug-log').checked = s.debugLogging;
+    $<HTMLInputElement>('sub-private').checked = s.allowPrivateSubscriptionHosts;
   }
   const { webrtcProtection } = await chrome.storage.local.get('webrtcProtection');
   const granted = await chrome.permissions.contains({ permissions: ['privacy'] });
@@ -542,6 +543,10 @@ function wire() {
   $<HTMLInputElement>('webrtc').onchange = (e) => void toggleWebrtc(e);
   $<HTMLInputElement>('debug-log').onchange = async (e) => {
     const r = await request('setSettings', { debugLogging: (e.target as HTMLInputElement).checked });
+    if (!r.ok) toast(r.error.message);
+  };
+  $<HTMLInputElement>('sub-private').onchange = async (e) => {
+    const r = await request('setSettings', { allowPrivateSubscriptionHosts: (e.target as HTMLInputElement).checked });
     if (!r.ok) toast(r.error.message);
   };
   $('copy-diag').onclick = () => void copyDiagnostics();
