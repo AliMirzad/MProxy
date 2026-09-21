@@ -357,8 +357,7 @@ async function loadSettings() {
     $<HTMLInputElement>('sub-private').checked = s.allowPrivateSubscriptionHosts;
   }
   const { webrtcProtection } = await chrome.storage.local.get('webrtcProtection');
-  const granted = await chrome.permissions.contains({ permissions: ['privacy'] });
-  $<HTMLInputElement>('webrtc').checked = webrtcProtection === true && granted;
+  $<HTMLInputElement>('webrtc').checked = webrtcProtection !== false; // on by default
   const jb = app?.status?.jetbrains;
   $('jb-status').textContent = jb?.issue ?? '';
   if (app?.runtime.kind === 'ready') {
@@ -444,14 +443,6 @@ async function saveJetbrains() {
 
 async function toggleWebrtc(e: Event) {
   const box = e.target as HTMLInputElement;
-  if (box.checked) {
-    // Must be called from a user gesture.
-    const granted = await chrome.permissions.request({ permissions: ['privacy'] });
-    if (!granted) {
-      box.checked = false;
-      return;
-    }
-  }
   await chrome.storage.local.set({ webrtcProtection: box.checked });
   if (!box.checked) {
     const net = (chrome as unknown as { privacy?: typeof chrome.privacy }).privacy?.network;

@@ -63,7 +63,7 @@ export const chromeProxy: ProxyControl = {
 
 export const chromeWebRtc: WebRtcControl = {
   async apply(protect) {
-    // chrome.privacy exists only after the optional "privacy" permission was granted.
+    // "privacy" is a required permission; guard anyway in case a policy removes the API.
     const net = (chrome as unknown as { privacy?: typeof chrome.privacy }).privacy?.network;
     if (!net) return;
     try {
@@ -78,8 +78,8 @@ export const chromeWebRtc: WebRtcControl = {
   },
 };
 
+/** WebRTC leak protection is ON unless the user switched it off (safe default). */
 export async function webrtcEnabled(): Promise<boolean> {
   const { webrtcProtection } = await chrome.storage.local.get('webrtcProtection');
-  if (webrtcProtection !== true) return false;
-  return chrome.permissions.contains({ permissions: ['privacy'] });
+  return webrtcProtection !== false;
 }

@@ -26,8 +26,9 @@ beforeAll(() => {
 
 describe('manifest attack surface', () => {
   it('requests only the permissions the product needs', () => {
-    expect([...manifest.permissions].sort()).toEqual(['activeTab', 'nativeMessaging', 'proxy', 'storage']);
-    expect(manifest.optional_permissions).toEqual(['privacy']);
+    // privacy: WebRTC leak protection, on by default while connected.
+    expect([...manifest.permissions].sort()).toEqual(['activeTab', 'nativeMessaging', 'privacy', 'proxy', 'storage']);
+    expect(manifest.optional_permissions).toBeUndefined();
     expect(manifest.host_permissions).toBeUndefined();
     expect(manifest.optional_host_permissions).toBeUndefined();
   });

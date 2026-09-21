@@ -4,8 +4,7 @@
   "version": "1.0.0",
   "description": "Private VLESS/VMess (Xray) proxy for this browser, with a local endpoint for JetBrains IDEs.",
   "minimum_chrome_version": "110",
-  "permissions": ["proxy", "storage", "nativeMessaging", "activeTab"],
-  "optional_permissions": ["privacy"],
+  "permissions": ["proxy", "storage", "nativeMessaging", "activeTab", "privacy"],
   "background": {
     "service_worker": "background.js",
     "type": "module"

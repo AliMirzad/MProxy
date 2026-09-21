@@ -202,6 +202,11 @@ try {
   check('native runtime reachable from the extension (hello)', true);
   const proxy0 = await sw.evaluate(() => chrome.proxy.settings.get({}));
   check('browser starts direct', proxy0.value.mode !== 'fixed_servers', JSON.stringify(proxy0.value));
+  // The operating system proxy configuration must never be touched.
+  const sysProxy = () => process.platform === 'win32'
+    ? spawnSync(join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'reg.exe'), ['query', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings'], { encoding: 'utf8' }).stdout.split(/\r?\n/).filter((l) => /Proxy|AutoConfig/i.test(l)).join('|')
+    : spawnSync('/usr/sbin/scutil', ['--proxy'], { encoding: 'utf8' }).stdout;
+  const sysProxyBefore = sysProxy();
 
   // JetBrains ports (avoid touching real 10808/10809).
   await popup.click('#nav-settings');
@@ -270,6 +275,9 @@ try {
   check('chrome.proxy uses loopback SOCKS5', pst.value.rules.singleProxy.host === '127.0.0.1' && pst.value.rules.singleProxy.scheme === 'socks5', JSON.stringify(pst.value.rules.singleProxy));
   const badge = await sw.evaluate(() => chrome.action.getBadgeText({}));
   check('toolbar badge shows ON', badge === 'ON');
+  const rtc = await sw.evaluate(() => chrome.privacy.network.webRTCIPHandlingPolicy.get({}));
+  check('WebRTC leak protection active by default while connected', rtc.value === 'disable_non_proxied_udp', JSON.stringify(rtc));
+  check('operating system proxy settings unchanged while connected', sysProxy() === sysProxyBefore, sysProxy());
 
   // Security: the installed runtime (not the build tree) runs Xray verified and isolated.
   {
@@ -347,6 +355,8 @@ try {
   const after = await sw.evaluate(() => chrome.proxy.settings.get({}));
   check('disconnect restores direct browser networking', after.value.mode !== 'fixed_servers' && after.levelOfControl === 'controllable_by_this_extension', JSON.stringify(after));
   check('probe.test unreachable after disconnect', !(await browserReachesProbe()));
+  const rtcAfter = await sw.evaluate(() => chrome.privacy.network.webRTCIPHandlingPolicy.get({}));
+  check('WebRTC policy restored after disconnect', rtcAfter.value !== 'disable_non_proxied_udp', JSON.stringify(rtcAfter));
   const direct = await viaHttpProxy(jbHttp, `http://127.0.0.1:${server.targetPort}/`);
   check('JetBrains endpoint keeps working (direct) after disconnect', direct.includes(MARKER));
   const directProbe = await viaHttpProxy(jbHttp, server.probeUrl);
