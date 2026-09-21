@@ -25,7 +25,7 @@ Popup ─▶ Service worker ──native messaging──▶ private-proxy-host (
        Browser ─────────────────── socks5://127.0.0.1:<port> ─────────────────────────────▶ VLESS / VMess ─▶ server ─▶ Internet
 ```
 
-* The **extension** (MV3; permissions `proxy`, `storage`, `nativeMessaging`, `activeTab`, optional `privacy`)
+* The **extension** (MV3; permissions `proxy`, `storage`, `nativeMessaging`, `activeTab`, `privacy` for WebRTC protection)
   is the only UI.
 * The **native helper** has no UI. The browser starts it and it exits with the browser. It parses and validates
   imports, stores servers (credentials encrypted with a key held in Windows Credential Manager / macOS Keychain),
@@ -135,14 +135,19 @@ connection. Git, Gradle, Maven, npm, Docker and terminals have their own proxy s
   Logs are redacted and there is no browsing history.
 * Everything listens on `127.0.0.1` only. The local endpoints are unauthenticated: any local process can use them
   while the browser runs. That is acceptable on single-user machines; disable the IDE endpoint on shared ones.
-* Full review: [docs/security.md](docs/security.md).
+* Imported configurations are data: strict field allowlists, and unknown or dangerous fields are rejected.
+  Loopback, cloud-metadata and (by default) private-network destinations are refused for subscriptions.
+* Windows: Xray runs at Low integrity in a restricted job without the ability to start programs, and its binary is
+  hash-verified before every launch.
+* Full review: [docs/security.md](docs/security.md), [threat model](docs/threat-model.md),
+  [security gate](docs/security-gate.md) (Windows: pilot-ready with conditions; macOS: not yet validated).
 
 ## Known limitations
 
 * The proxy (including the IDE endpoint) exists only while the browser is running.
 * Only one browser at a time can own the IDE ports. Browser tunnels work in several browsers at once.
 * Private IP ranges and plain host names always go direct (no intranet-through-VPN in V1).
-* WebRTC can reveal the real IP unless "Block WebRTC" is enabled. UDP is not proxied.
+* WebRTC protection is on by default. If the user disables it, WebRTC can reveal the real IP. UDP is not proxied.
 * No automatic server selection, no scheduled subscription refresh, no auto-update, no kill switch (by design).
 * Branded Chrome ≥ 137 cannot be automated with `--load-extension`, so E2E automation uses Brave/Chromium.
 * macOS, Chrome-specific and real-server behaviour still need validation ([docs/validation.md](docs/validation.md)).

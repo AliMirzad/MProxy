@@ -107,8 +107,32 @@ is never left pointing at a dead proxy.
 * **Verified by tests.** `probe.test` is resolvable only through the test server's DNS config. The
   browser and IDE endpoint reach it only through the tunnel, and fail after disconnect (see
   `native/tests/integration.rs`, `extension/tests/e2e/browser.e2e.mjs`).
-* Not covered by the proxy: WebRTC UDP. The optional "Block WebRTC" setting sets
-  `webRTCIPHandlingPolicy = disable_non_proxied_udp` while connected.
+* Not covered by the proxy: WebRTC UDP. "Block WebRTC" is **on by default** and sets
+  `webRTCIPHandlingPolicy = disable_non_proxied_udp` while connected (verified by E2E).
+
+## Local listeners
+
+Every listening socket the product creates (verified by socket enumeration in
+`native/tests/integration.rs xray_isolation_and_listeners`: exactly these three, TCP only):
+
+| Process | Protocol | Address | Port strategy | Purpose | Who can connect | Security boundary |
+|---|---|---|---|---|---|---|
+| Xray | SOCKS5 (TCP, UDP off) | 127.0.0.1 | ephemeral: an OS-assigned free port per connection | browser proxy | any local process (unauthenticated) while connected | loopback only; the tunnel is the only thing behind it |
+| Xray | HTTP proxy (TCP) | 127.0.0.1 | 10809, configurable (≥1024) | JetBrains/IDE endpoint | any local process while the browser runs | loopback only; self-loop to our ports blocked |
+| Xray | SOCKS5 (TCP, UDP off) | 127.0.0.1 | 10808, configurable (≥1024) | IDE endpoint (alternative) | same | same |
+| Helper | — | — | none | control goes over the native-messaging stdio pipe from the browser | only the pinned extension | no socket at all |
+
+There is no control API on any socket: no localhost HTTP server, no Xray `api`/`stats` inbound. The
+helper binds `127.0.0.1:0` for a moment only to pick a free port and releases it.
+
+**Manual verification** that nothing listens outside loopback while connected:
+
+* Windows (PowerShell): `Get-NetTCPConnection -State Listen -OwningProcess (Get-Process xray).Id`
+  and `Get-NetUDPEndpoint -OwningProcess (Get-Process xray).Id`. Every `LocalAddress` must be
+  `127.0.0.1`, and there must be no UDP endpoints. `Get-NetTCPConnection -State Listen -OwningProcess (Get-Process private-proxy-host).Id` must return nothing.
+* macOS: `lsof -nP -a -p $(pgrep -x xray) -iTCP -sTCP:LISTEN` (only `127.0.0.1:…`), `lsof -nP -a -p $(pgrep -x xray) -iUDP` (empty).
+* From another machine on the LAN: `Test-NetConnection <laptop-ip> -Port 10809` / `nc -vz <laptop-ip> 10809` must fail.
+* Popup → Settings → Copy diagnostics shows `xrayIsolation` (Windows: `integrity: low`) and `dataDirProtection`.
 
 ## Ports
 
@@ -129,7 +153,7 @@ proxy self-loops (e.g. a page requesting `http://127.0.0.1:10809/`).
 |---|---|---|
 | Server metadata, subscriptions (without URL), settings | `state.json` in the data dir | user-only directory (0700 on macOS, user profile ACL on Windows) |
 | UUIDs, REALITY keys/short IDs, VLESS encryption, subscription URLs | `secrets.bin` | XChaCha20-Poly1305; 256-bit key in Credential Manager / Keychain |
-| UI preferences (WebRTC toggle) | `chrome.storage.local` | no secrets |
+| UI preferences (WebRTC toggle, default on) | `chrome.storage.local` | no secrets |
 | Logs | `logs/helper.log` (+3 rotations of 512 KiB) | redacted; no browsing history unless verbose mode |
 
 Data dir: `%LOCALAPPDATA%\PrivateProxy` (Windows), `~/Library/Application Support/PrivateProxy`
@@ -155,3 +179,13 @@ Encryption. Rejected with a clear message: HTTP/2 (`h2`) and QUIC (removed from 
 non-VLESS/VMess protocols.
 Adding a transport means adding a `Transport` variant, a parse arm in `stream.rs`, and a generator arm in
 `xrayconf.rs`.
+
+## Process isolation (summary)
+
+* The helper runs as the user (Windows: Medium integrity). DLL search is restricted to System32, and extension
+  points and remote/low-label images are disabled. It has no sockets.
+* Xray (Windows) is started suspended with a **Low-integrity** token, creation-time mitigation policies,
+  child-process creation blocked, an explicit handle list and a minimal environment. It is assigned to a restricted
+  kill-on-close job before it runs. Its binary must match the pinned SHA-256.
+* macOS: Xray runs as the user with a cleared environment. OS sandboxing is not implemented yet
+  ([threat-model.md](threat-model.md#process-isolation-evaluation)).

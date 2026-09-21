@@ -78,8 +78,8 @@ We therefore pin the release and generate `network`.
   This guarantees no stale proxy.
 * If `levelOfControl` shows another extension controls the proxy, we report it instead of
   pretending to be connected.
-* WebRTC can reveal the real IP outside the proxy. The optional `privacy` permission is requested only
-  when the user enables "Block WebRTC IP leak" (sets `webRTCIPHandlingPolicy =
+* WebRTC can reveal the real IP outside the proxy. *(Superseded by TD-20: protection is now on by default.)* Originally the optional `privacy` permission was requested only
+  when the user enabled "Block WebRTC IP leak" (sets `webRTCIPHandlingPolicy =
   disable_non_proxied_udp` while connected, restores on disconnect).
 
 ## TD-6 DNS
@@ -162,3 +162,16 @@ match, so the selection survives.
 | TD-17 | On Windows a just-killed Xray can hold its listening ports for a moment | Port checks retry for up to 1.5 s before declaring an IDE port "in use" |
 | TD-18 | `chrome.proxy` `regular`-scope settings survive browser restarts | The service worker clears the setting on every start. The E2E test kills the browser while connected and asserts no stale proxy after restart |
 | TD-19 | Raw OS errors (e.g. "os error 10054") are meaningless to users | The helper maps failures to short messages plus error codes. Details go to the redacted log |
+
+## Security hardening pass (host-compromise prevention)
+
+| # | Decision |
+|---|---|
+| TD-20 | WebRTC protection on by default; `privacy` became a required permission (safe defaults win) |
+| TD-21 | Imported config: strict allowlists; dangerous and **unknown** fields reject the entry (`parse/fields.rs`) |
+| TD-22 | Destination policy (`netpolicy.rs`): loopback, link-local/metadata etc. refused; private networks allowed for proxy servers and opt-in for subscriptions; DNS answers checked for direct subscription fetches |
+| TD-23 | Xray on Windows: Low integrity, mitigations, no child processes, restricted job, minimal environment (`winproc.rs`). ACG and signed-only images rejected for EDR compatibility |
+| TD-24 | Pinned Xray **binary** SHA-256, verified before every launch; geo data files dropped |
+| TD-25 | Test hooks only in debug builds with `PRIVATE_PROXY_TEST_MODE=1`; E2E and integration use debug builds |
+| TD-26 | `DependentLoadFlags=System32`: fixes DLL planting found in the V1 build |
+| TD-27 | Proxy-takeover monitoring via `chrome.proxy.settings.onChange` |

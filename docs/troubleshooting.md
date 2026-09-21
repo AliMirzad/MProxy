@@ -18,6 +18,11 @@ clipboard.
 | **Browser proxy blocked** | Another extension (or policy) controls the browser proxy | Disable other proxy/VPN extensions, or ask IT about the proxy policy |
 | **Secure storage unavailable** | The Credential Manager/Keychain item that decrypts saved servers is missing or inaccessible | macOS: allow keychain access when asked. Otherwise use Settings → **Remove all servers** and import again |
 | **Subscription update failed** (in Settings) | Provider unreachable, HTTP error, not HTTPS, over 5 MiB, or no VLESS/VMess entries | Check the URL in a browser, try again while connected (the fetch goes through the tunnel) |
+| **Xray failed: "Xray integrity check failed"** | The installed Xray does not match the pinned release (modified, corrupted, or replaced) | Reinstall the runtime from the official package. Treat an unexpected change as a security incident |
+| Import error **"… is not allowed: …"** / **"Unsupported field …"** | The configuration contains a field that could touch local files, bind interfaces, chain proxies or resolve names locally, or that this version does not know | Ask the provider for a plain client link. The message names the field |
+| **"Server address … points to this computer"** / **"not allowed: link-local"** | The link targets localhost, a cloud metadata address or a similar local destination | These are refused by design |
+| **"Subscription URL points to a private network address"** | The subscription server is on an internal network | If it is your company's server: Settings → Subscriptions → "Allow private-network subscription URLs" |
+| **Browser proxy blocked** after being connected | Another extension (or policy) took over the browser proxy, so the tunnel was disconnected | Disable the other proxy extension and connect again |
 | IDE line: **Port 10809 is in use** | Another program or another browser running Private Proxy holds the IDE port | Close it, or choose other ports in Settings (and update the IDE) |
 
 ## Common questions
@@ -25,8 +30,8 @@ clipboard.
 **Is my whole computer proxied?** No. Only this browser profile is (and whatever you explicitly point at
 `127.0.0.1:10809/10808`). System proxy, DNS and other apps are untouched.
 
-**Connected, but a site shows my real IP.** The site may use WebRTC. Enable **Settings → Privacy → Block
-WebRTC**. Also check `chrome://net-internals/#proxy`: the effective proxy should be
+**Connected, but a site shows my real IP.** The site may use WebRTC. Check that **Settings → Privacy → Block
+WebRTC** is enabled (it is on by default). Also check `chrome://net-internals/#proxy`: the effective proxy should be
 `socks5://127.0.0.1:<port>`. If it is not, another extension may be winning; the popup would say so.
 
 **Everything went direct after an error.** That is the V1 design (no kill switch): if the tunnel fails, the

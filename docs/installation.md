@@ -106,6 +106,17 @@ different protocol versions, the popup shows **Update required** and says which 
 
 Recommended order: runtime first, then extension. Within a protocol version, any combination works.
 
+## Security notes for company deployment
+
+* Distribute the extension as a **policy force-installed CRX** and disable Developer mode by policy
+  (`ExtensionDeveloperModeSettings`, `ExtensionInstallBlocklist: ["*"]` + `ExtensionInstallAllowlist`). Unpacked
+  extensions can claim any ID whose public key they copy (security-gate B9).
+* Sign the helper and Xray (Authenticode / Developer ID + notarization) before broad rollout (B34).
+* On multi-user machines (terminal servers), disable the IDE endpoint: loopback listeners are unauthenticated (B12).
+* The runtime verifies the Xray binary against the pinned SHA-256 before every launch. Never replace
+  `xray.exe`/`xray` by hand.
+* No step needs administrator rights except the optional macOS `.pkg` (only during installation).
+
 ## Uninstalling
 
 * **Windows:** Settings → Apps → "Private Proxy (browser runtime)" → Uninstall, or `Uninstall.cmd`.

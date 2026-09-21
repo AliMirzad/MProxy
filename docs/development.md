@@ -43,22 +43,26 @@ pinned extension ID, so the registered runtime accepts both. After a helper chan
 
 | Layer | Where | Runs |
 |---|---|---|
-| Parser, validation, config generation, store, secrets, framing, protocol, redaction | `native/src/**` `#[cfg(test)]` | `cargo test` (53 tests) |
-| Helper ↔ real Xray ↔ local Xray "server" (9 protocol/transport/security combos, DNS, IDE endpoints, crash restart, failures, subscriptions) | `native/tests/integration.rs` | `cargo test` (needs `native/xray/dist/<platform>`) |
-| Extension controller (proxy mirroring, fail-safe, allow-list, timeouts), view model, QR round-trip | `extension/tests/*.test.ts` | `vitest` (30 tests) |
+| Parser, validation, config generation, store, secrets, framing, protocol, redaction, hostile-input suite (`parse/security_tests.rs`), destination policy, ACLs, Xray under restrictions | `native/src/**` `#[cfg(test)]` | `cargo test` (70 tests) |
+| Helper ↔ real Xray ↔ local Xray "server" (9 protocol/transport/security combos, DNS, IDE endpoints, crash restart, failures, subscriptions) + security (isolation, listeners, hostile messages, unauthorized origins, tampered Xray, junctions, SSRF, malicious subscriptions, DLL planting) | `native/tests/integration.rs` | `cargo test` (13 tests; needs `native/xray/dist/<platform>`) |
+| Extension controller (proxy mirroring, fail-safe, takeover, allow-list, timeouts), view model, QR round-trip, manifest/CSP/bundle security scan | `extension/tests/*.test.ts` | `vitest` (47 tests) |
 | **Real browser**: installer → extension → native messaging → Xray → server; import, connect, 3 servers, DNS, IDE endpoint, crash, disconnect, no orphans, no stale proxy after restart | `extension/tests/e2e/browser.e2e.mjs` | `npm run test:e2e [-- --browser <path>] [--headed] [--screenshots <dir>]` |
 
 The E2E test installs the runtime into a temp dir and registers native messaging for the current user
 (HKCU / `~/Library/...`). The registration is removed again at the end (`uninstall --purge`). It uses a
 throwaway browser profile and never touches your own.
 
-Environment hooks, **for tests and development only**:
+Environment hooks, **for tests and development only**. They work only in **debug builds** and only when
+`PRIVATE_PROXY_TEST_MODE=1` is also set (`ppcore::test_hook`). Release builds ignore all of them. The E2E test
+therefore uses the debug helper.
 
 | Variable | Effect |
 |---|---|
+| `PRIVATE_PROXY_TEST_MODE=1` | enables the hooks below (debug builds only) |
+| `PRIVATE_PROXY_ALLOW_LOOPBACK=1` | allow 127.0.0.1 proxy servers and plain-HTTP loopback subscriptions (test servers) |
 | `PRIVATE_PROXY_DATA_DIR` | use another data/log directory |
 | `PRIVATE_PROXY_INSECURE_FILE_KEY=1` | keep the data key in a file instead of Credential Manager/Keychain (CI) |
-| `PRIVATE_PROXY_XRAY` | path to the Xray binary |
+| `PRIVATE_PROXY_XRAY` | path to the Xray binary (must still match the pinned SHA-256) |
 | `PRIVATE_PROXY_PROBE_URL=host:port/path` | connectivity-probe target |
 
 ## Diagnostics while debugging
@@ -86,3 +90,14 @@ Environment hooks, **for tests and development only**:
   config fields (see TD-4 in technical-decisions.md for how field support was verified with `xray run -test`).
 * **Extension key:** `scripts/generate-extension-key.mjs --force` rotates the ID. Every installed runtime
   must then be reinstalled.
+
+## Build notes
+
+* **Target directory.** If the repository path is long (Windows `MAX_PATH`), `scripts/cargo.mjs` builds into
+  `~/.private-proxy-target` (see `scripts/target-dir.mjs`; override with `CARGO_TARGET_DIR`).
+* **Xray upgrade checklist:**
+  1. Update `version` and the zip `sha256` values (from the release `.dgst` files) in `native/xray/xray.lock.json`.
+  2. Delete the `binarySha256` entries, then run `node scripts/fetch-xray.mjs --record all`.
+  3. Review `native/src/parse/fields.rs` against `infra/conf/*.go` at the new tag.
+  4. Run all test suites.
+* **Security gate:** re-run the suites listed in [security-gate.md](security-gate.md) and update it for every release.
