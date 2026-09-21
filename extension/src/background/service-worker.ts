@@ -1,0 +1,74 @@
+// MV3 service worker: owns the native messaging port and the browser proxy setting.
+// Only this extension's own pages (the popup) can talk to it: there are no content
+// scripts and no `externally_connectable`, and every message's sender is checked.
+import { Controller } from './controller';
+import { chromeProxy, chromeWebRtc, webrtcEnabled } from './chrome-adapters';
+import type { AppState, SwPush, UiMessage } from '../shared/app-state';
+
+const popupPorts = new Set<chrome.runtime.Port>();
+
+const controller = new Controller({
+  connectNative: (host) => chrome.runtime.connectNative(host),
+  lastError: () => chrome.runtime.lastError?.message,
+  proxy: chromeProxy,
+  webrtc: chromeWebRtc,
+  webrtcEnabled,
+  broadcast: (state: AppState) => {
+    const msg: SwPush = { type: 'state', state };
+    for (const p of popupPorts) {
+      try {
+        p.postMessage(msg);
+      } catch {
+        popupPorts.delete(p);
+      }
+    }
+    void chrome.action.setBadgeText({ text: state.browserProxied ? 'ON' : '' });
+    void chrome.action.setBadgeBackgroundColor({ color: '#1f9d55' });
+  },
+  extensionVersion: chrome.runtime.getManifest().version,
+  setTimer: (cb, ms) => setTimeout(cb, ms),
+  clearTimer: (t) => clearTimeout(t as ReturnType<typeof setTimeout>),
+});
+
+function fromOwnPage(sender: chrome.runtime.MessageSender): boolean {
+  return sender.id === chrome.runtime.id && !sender.tab && typeof sender.url === 'string' && sender.url.startsWith(chrome.runtime.getURL(''));
+}
+
+// Registering these listeners makes Chromium start the worker at browser startup, which
+// clears any stale proxy setting and (re)connects the runtime.
+chrome.runtime.onStartup.addListener(() => undefined);
+chrome.runtime.onInstalled.addListener(() => undefined);
+
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== 'popup' || !port.sender || !fromOwnPage(port.sender)) {
+    port.disconnect();
+    return;
+  }
+  popupPorts.add(port);
+  port.onDisconnect.addListener(() => popupPorts.delete(port));
+  const msg: SwPush = { type: 'state', state: controller.state };
+  port.postMessage(msg);
+  const k = controller.state.runtime.kind;
+  if (k === 'missing' || k === 'forbidden' || k === 'crashed') controller.retry();
+});
+
+chrome.runtime.onMessage.addListener((raw: unknown, sender, sendResponse) => {
+  if (!fromOwnPage(sender)) return false;
+  const msg = raw as UiMessage;
+  switch (msg?.type) {
+    case 'request':
+      controller.request(String(msg.cmd), msg.args ?? {}).then(sendResponse);
+      return true; // async response
+    case 'retryNative':
+      controller.retry();
+      sendResponse({ ok: true });
+      return false;
+    case 'getState':
+      sendResponse(controller.state);
+      return false;
+    default:
+      return false;
+  }
+});
+
+void controller.start();
