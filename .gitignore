@@ -1,0 +1,12 @@
+# build output
+native/target/
+extension/node_modules/
+extension/dist/
+node_modules/
+dist/
+# downloaded third-party binaries (fetched + hash-verified by scripts/fetch-xray.mjs)
+native/xray/dist/
+# extension signing key (only the public half is committed)
+.keys/
+.tools/
+*.log

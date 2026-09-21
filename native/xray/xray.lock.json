@@ -1,0 +1,11 @@
+{
+  "version": "v26.3.27",
+  "source": "https://github.com/XTLS/Xray-core/releases/download",
+  "license": "MPL-2.0",
+  "assets": {
+    "windows-x64": { "file": "Xray-windows-64.zip", "sha256": "d004c39288ce9ada487c6f398c7c545f7d749e44bdfdd59dbc9f865afba4e1ad" },
+    "windows-arm64": { "file": "Xray-windows-arm64-v8a.zip", "sha256": "35d4ed6ec21224fb22b07c2c3f672e2350cd536f2c74d309150175a76365ea88" },
+    "macos-x64": { "file": "Xray-macos-64.zip", "sha256": "f5b0471d3459eff1b82e48af0aeac186abcc3298210070afbbbd8437a4e8b203" },
+    "macos-arm64": { "file": "Xray-macos-arm64-v8a.zip", "sha256": "2e93a67e8aa1936ecefb307e120830fcbd4c643ab9b1c46a2d0838d5f8409eaf" }
+  }
+}
