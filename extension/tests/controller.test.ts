@@ -33,6 +33,7 @@ const status = (s: Partial<NativeStatus>): NativeStatus => ({ state: 'disconnect
 
 function setup(opts: { proxyError?: string | null; connectThrows?: boolean; lastError?: string; helloError?: { code: string; message: string } } = {}) {
   let controlProblem: string | null = null;
+  let webrtcProblem: string | null = null;
   const ports: FakePort[] = [];
   const log: string[] = [];
   const timers: { cb: () => void; ms: number }[] = [];
@@ -60,7 +61,7 @@ function setup(opts: { proxyError?: string | null; connectThrows?: boolean; last
       },
       controlProblem: async () => controlProblem,
     },
-    webrtc: { apply: async (p) => void log.push(`webrtc:${p}`) },
+    webrtc: { apply: async (p) => void log.push(`webrtc:${p}`), problem: async () => webrtcProblem },
     webrtcEnabled: async () => true,
     broadcast: (s) => states.push(s),
     extensionVersion: '1.0.0',
@@ -75,7 +76,7 @@ function setup(opts: { proxyError?: string | null; connectThrows?: boolean; last
     },
   };
   const c = new Controller(deps);
-  return { c, ports, log, timers, states, setLastError: (e: string) => (lastError = e), setControlProblem: (p: string | null) => (controlProblem = p) };
+  return { c, ports, log, timers, states, setLastError: (e: string) => (lastError = e), setControlProblem: (p: string | null) => (controlProblem = p), setWebrtcProblem: (p: string | null) => (webrtcProblem = p) };
 }
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
@@ -183,6 +184,36 @@ describe('Controller', () => {
     expect(env.c.state.browserProxied).toBe(false);
     expect(env.c.state.proxyError).toMatch(/Another extension.*disconnected/);
     expect(env.log).toEqual(['clear', 'webrtc:false']);
+    expect(p.sent.some((m) => m.cmd === 'disconnect')).toBe(true);
+  });
+
+  it('disconnects when another extension overrides the WebRTC leak protection', async () => {
+    await env.c.start();
+    await tick();
+    const p = env.ports[0];
+    p.deliver({ event: 'status', status: status({ state: 'connected', serverId: 'a', proxy: { scheme: 'http', host: '127.0.0.1', port: 5555, username: 'bUser', password: 'bPass' } }) });
+    await env.c.idle();
+    expect(env.c.state.browserProxied).toBe(true);
+    env.setWebrtcProblem('Another extension changed the WebRTC setting, so your real IP address could leak.');
+    env.log.length = 0;
+    env.c.proxyControlChanged();
+    await env.c.idle();
+    expect(env.c.state.browserProxied).toBe(false);
+    expect(env.c.state.proxyError).toMatch(/WebRTC.*disconnected/);
+    expect(env.log).toEqual(['clear', 'webrtc:false']);
+    expect(p.sent.some((m) => m.cmd === 'disconnect')).toBe(true);
+    expect(env.c.proxyCredentials({ host: '127.0.0.1', port: 5555 })).toBeNull();
+  });
+
+  it('refuses to report connected when WebRTC protection cannot be applied', async () => {
+    env.setWebrtcProblem('Another extension changed the WebRTC setting, so your real IP address could leak.');
+    await env.c.start();
+    await tick();
+    const p = env.ports[0];
+    p.deliver({ event: 'status', status: status({ state: 'connected', serverId: 'a', proxy: { scheme: 'http', host: '127.0.0.1', port: 5555, username: 'bUser', password: 'bPass' } }) });
+    await env.c.idle();
+    expect(env.c.state.browserProxied).toBe(false);
+    expect(env.c.state.proxyError).toMatch(/WebRTC/);
     expect(p.sent.some((m) => m.cmd === 'disconnect')).toBe(true);
   });
 

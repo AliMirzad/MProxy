@@ -17,7 +17,7 @@
 // The user's own browser profile is never touched.
 import { chromium } from 'playwright-core';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -125,47 +125,33 @@ const env = { ...process.env, PRIVATE_PROXY_TEST_MODE: '1', PRIVATE_PROXY_ALLOW_
 let server;
 let context;
 
-// A second, hostile extension loaded next to ours. It tries every way an extension could reach
-// the privileged side: native messaging to our host, runtime messages and a port to our
-// extension (pretending to be the popup).
+// A second, hostile extension loaded next to ours (test fixture, never shipped): native messaging,
+// messaging/popup spoofing, proxy takeover and races, localhost scanning, header sniffing.
+const fixtures = join(root, 'extension/tests/fixtures');
 const attackerDir = join(tmp, 'attacker-ext');
-mkdirSync(attackerDir, { recursive: true });
-writeFileSync(join(attackerDir, 'manifest.json'), JSON.stringify({
-  manifest_version: 3, name: 'E2E attacker', version: '1.0', permissions: ['nativeMessaging', 'proxy'], background: { service_worker: 'sw.js' },
-}));
-writeFileSync(join(attackerDir, 'sw.js'), `
-const VICTIM = ${JSON.stringify(extId)};
-globalThis.attack = async () => {
-  const out = {};
-  await new Promise((resolve) => {
-    try {
-      const p = chrome.runtime.connectNative('com.privateproxy.host');
-      p.onMessage.addListener(() => { out.native = 'GOT A MESSAGE FROM THE HOST'; });
-      p.onDisconnect.addListener(() => { out.native = out.native || ('disconnected: ' + (chrome.runtime.lastError?.message || '')); resolve(); });
-      p.postMessage({ id: 1, cmd: 'connect', args: { serverId: '00000000-0000-4000-8000-000000000000' } });
-    } catch (e) { out.native = 'threw: ' + e.message; resolve(); }
-    setTimeout(resolve, 5000);
-  });
-  try {
-    out.message = JSON.stringify(await chrome.runtime.sendMessage(VICTIM, { type: 'request', cmd: 'disconnect', args: {} }));
-  } catch (e) { out.message = 'error: ' + e.message; }
-  await new Promise((resolve) => {
-    try {
-      const port = chrome.runtime.connect(VICTIM, { name: 'popup' });
-      port.onMessage.addListener(() => { out.port = 'GOT STATE FROM VICTIM'; resolve(); });
-      port.onDisconnect.addListener(() => { out.port = out.port || ('disconnected: ' + (chrome.runtime.lastError?.message || '')); resolve(); });
-      port.postMessage({ type: 'request', cmd: 'disconnect', args: {} });
-    } catch (e) { out.port = 'threw: ' + e.message; resolve(); }
-    setTimeout(resolve, 3000);
-  });
-  return out;
-};
-globalThis.takeOver = async () => {
-  await chrome.proxy.settings.set({ value: { mode: 'fixed_servers', rules: { singleProxy: { scheme: 'http', host: '127.0.0.1', port: 9 } } }, scope: 'regular' });
-  return (await chrome.proxy.settings.get({})).levelOfControl;
-};
-globalThis.release = async () => chrome.proxy.settings.clear({ scope: 'regular' });
-`);
+cpSync(join(fixtures, 'malicious-extension'), attackerDir, { recursive: true });
+
+// Traps that record every credential offered to them:
+//  - a "website" that demands HTTP authentication (401),
+//  - a "proxy" that demands proxy authentication (407), which the attacker extension points the
+//    browser at while we are connected.
+const trapLog = { auth401: [], proxy407: [] };
+const authSite = http.createServer((q, r) => {
+  trapLog.auth401.push(q.headers.authorization || '');
+  r.writeHead(401, { 'WWW-Authenticate': 'Basic realm="phish"', 'Access-Control-Allow-Origin': '*', connection: 'close' });
+  r.end('auth required');
+});
+const trapProxy = http.createServer((q, r) => {
+  trapLog.proxy407.push(q.headers['proxy-authorization'] || '');
+  r.writeHead(407, { 'Proxy-Authenticate': 'Basic realm="trap"', connection: 'close' });
+  r.end();
+});
+trapProxy.on('connect', (q, sock) => {
+  trapLog.proxy407.push(q.headers['proxy-authorization'] || '');
+  sock.end('HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm="trap"\r\n\r\n');
+});
+await Promise.all([authSite, trapProxy].map((srv) => new Promise((r) => srv.listen(0, '127.0.0.1', r))));
+const credentialOffered = (list) => list.filter((h) => h && !/^Basic YXR0YWNrZXI6YXR0YWNrZXI=$/.test(h));
 
 async function launch() {
   const ctx = await chromium.launchPersistentContext(profileDir, {
@@ -400,42 +386,79 @@ try {
     }
   }
 
-  // Security: a hostile web page cannot reach the extension or drive the tunnel.
+  // Security: a hostile web page (fixture, public origin http://evil.example) against the running tunnel.
   {
+    const bport = pst.value.rules.singleProxy.port;
+    const serversBefore = (await popup.evaluate(() => chrome.runtime.sendMessage({ type: 'request', cmd: 'listServers', args: {} }))).result.servers.length;
     const evil = await ctx.newPage();
-    await evil.goto(`http://127.0.0.1:${server.targetPort}/`);
-    const r = await evil.evaluate(async ({ id, jb }) => {
-      const out = {};
-      out.runtime = typeof globalThis.chrome?.runtime?.sendMessage;
-      try {
-        await globalThis.chrome.runtime.sendMessage(id, { type: 'request', cmd: 'disconnect', args: {} });
-        out.send = 'sent';
-      } catch (e) { out.send = 'error: ' + e.message; }
-      try { await fetch(`chrome-extension://${id}/popup.html`); out.resource = 'readable'; } catch { out.resource = 'blocked'; }
-      try { const t = await (await fetch(`http://127.0.0.1:${jb}/`)).text(); out.ide = t.slice(0, 40); } catch { out.ide = 'blocked'; }
-      window.postMessage({ type: 'request', cmd: 'disconnect', args: {} }, '*');
-      return out;
-    }, { id: extId, jb: jbHttp });
+    await evil.route('http://evil.example/**', (route) => {
+      const name = new URL(route.request().url()).pathname.slice(1) || 'index.html';
+      const file = join(fixtures, 'malicious-page', name);
+      if (!existsSync(file)) return route.fulfill({ status: 404, body: '' });
+      route.fulfill({ status: 200, contentType: name.endsWith('.js') ? 'text/javascript' : 'text/html', body: readFileSync(file) });
+    });
+    await evil.goto('http://evil.example/');
+    const authUrl = `http://probe.test:${authSite.address().port}/login`;
+    const r = await evil.evaluate((cfg) => window.attack(cfg), { extId, ports: [bport, jbHttp, jbSocks], authUrl }).catch((e) => ({ navigatedAway: String(e) }));
+    console.log('  hostile page result: ' + JSON.stringify(r));
     await evil.close();
-    check('web page has no chrome.runtime messaging channel to the extension', r.runtime !== 'function' || r.send.startsWith('error'), JSON.stringify(r));
-    check('web page cannot load extension resources', r.resource === 'blocked', r.resource);
-    check('web page cannot use the IDE endpoint as a relay to the extension or helper', !String(r.ide).includes(MARKER), String(r.ide));
+    check('page: no messaging channel to the extension', r.chromeRuntime !== 'function' || String(r.sendMessage).startsWith('error'), `${r.chromeRuntime} ${r.sendMessage}`);
+    check('page: no native messaging API', r.connectNative !== 'function', r.connectNative);
+    check('page: extension resources not loadable (fetch/script/iframe)', r.resourceFetch === 'blocked' && r.resourceScript !== 'loaded' && r.resourceIframe !== 'LOADED AND READABLE', `${r.resourceFetch} ${r.resourceScript} ${r.resourceIframe}`);
+    const ports = Object.values(r.ports || {});
+    check('page: cannot read any response from the local tunnel/IDE ports', ports.length === 3 && ports.every((p) => !String(p.cors).startsWith('READABLE')), JSON.stringify(r.ports));
+    check('page: no WebSocket to the local tunnel/IDE ports', ports.every((p) => p.ws !== 'OPEN'), ports.map((p) => p.ws).join(','));
+    const rawIp = (r.webrtcCandidates || []).filter((c) => / (\d{1,3}\.){3}\d{1,3} /.test(c) || /typ srflx/.test(c));
+    check('page: WebRTC exposes no IP address while connected', rawIp.length === 0, JSON.stringify(r.webrtcCandidates));
+    check('page: HTTP-auth phishing site never receives the tunnel credentials', credentialOffered(trapLog.auth401).length === 0, JSON.stringify(trapLog.auth401));
+    const serversAfter = (await popup.evaluate(() => chrome.runtime.sendMessage({ type: 'request', cmd: 'listServers', args: {} }))).result.servers.length;
+    check('page: vless:// navigation imports nothing', serversAfter === serversBefore, `${serversBefore} -> ${serversAfter}`);
     await popup.waitForTimeout(500);
     check('tunnel unaffected by the hostile page', (await popupState(popup)) === 'Connected');
   }
 
-  // Security: a second, hostile extension cannot use our native host or our extension.
+  // Security: a second, hostile extension (fixture) against the running tunnel.
   {
     const attacker = ctx.serviceWorkers().find((w) => !w.url().includes(extId));
     check('attacker extension loaded next to ours', !!attacker, ctx.serviceWorkers().map((w) => w.url()).join(' '));
-    if (attacker) {
-      const r = await attacker.evaluate(() => globalThis.attack());
-      check('other extension is refused by the native host (allowed_origins)', /forbidden/i.test(r.native) && !r.native.includes('GOT'), r.native);
-      check('other extension cannot message our extension', String(r.message).startsWith('error') || r.message === undefined || r.message === 'undefined', r.message);
-      check('other extension cannot connect to our extension as the popup', !String(r.port).includes('GOT'), r.port);
-      await popup.waitForTimeout(500);
-      check('tunnel unaffected by the hostile extension', (await popupState(popup)) === 'Connected');
-    }
+    const bport = pst.value.rules.singleProxy.port;
+    const r = await attacker.evaluate((v) => globalThis.attack(v), extId);
+    console.log('  hostile extension result: ' + JSON.stringify(r));
+    check('other extension is refused by the native host (allowed_origins)', /forbidden/i.test(r.native) && !r.native.includes('GOT'), r.native);
+    check('other extension is refused by the native host (one-shot sendNativeMessage)', !String(r.nativeOneShot).startsWith('GOT'), r.nativeOneShot);
+    const msgs = ['message_disconnect', 'message_getState', 'message_getIdeCredentials'].map((k) => String(r[k]));
+    check('other extension cannot message our extension (disconnect/getState/getIdeCredentials)', msgs.every((m) => m.startsWith('error') || m === 'undefined'), msgs.join(' | '));
+    check('other extension cannot connect to our extension as the popup', !String(r.port).includes('GOT'), r.port);
+    check('other extension cannot read our extension files', !String(r.resource).startsWith('READ'), r.resource);
+    check('shared proxy settings reveal no credentials', !/password|username|Basic /i.test(r.proxySettings), r.proxySettings);
+    const scan = await attacker.evaluate((p) => globalThis.scan(p), [bport, jbHttp]);
+    console.log('  localhost scan by the hostile extension: ' + JSON.stringify(scan));
+    check('localhost scan: tunnel and IDE ports answer only 407 to another extension', Object.values(scan).every((v) => !v.startsWith('2') && !v.includes(MARKER)), JSON.stringify(scan));
+    // By design every browser request (other extensions included) goes through the tunnel; what
+    // matters is that the credentials are never visible to them.
+    const ride = await attacker.evaluate((u) => globalThis.fetchText(u), server.probeUrl);
+    console.log('  hostile extension fetch through the browser proxy: ' + ride.slice(0, 40));
+    await browserReachesProbe();
+    const sniffed = await attacker.evaluate(() => globalThis.sniffed());
+    const leaked = sniffed.headers.filter((h) => /^(proxy-)?authorization:/i.test(h));
+    check('webRequest (extraHeaders) never exposes Proxy-Authorization to another extension', leaked.length === 0 && sniffed.headers.length > 0, `${sniffed.headers.length} headers seen, ${leaked.length} auth`);
+    console.log('  proxy challenges visible to the hostile extension: ' + JSON.stringify(sniffed.auth.slice(0, 3)));
+    await popup.waitForTimeout(500);
+    check('tunnel unaffected by the hostile extension', (await popupState(popup)) === 'Connected');
+    // Another extension silently overrides our WebRTC leak protection: must fail closed.
+    const rtc = await attacker.evaluate(() => globalThis.webrtcOff());
+    const rtcLabel = await waitFor(async () => {
+      const l = await popupState(popup);
+      return l !== 'Connected' ? l : null;
+    }, 'WebRTC override detected', 15000).catch(() => 'still Connected');
+    const rtcText = await popup.evaluate(() => document.body.innerText);
+    check('WebRTC protection overridden by another extension -> tunnel disconnected with a reason', rtcLabel !== 'still Connected' && /WebRTC/.test(rtcText), `${rtcLabel}; attacker=${rtc}`);
+    check('browser proxy removed after the WebRTC override', (await sw.evaluate(() => chrome.proxy.settings.get({}))).value.mode !== 'fixed_servers');
+    await attacker.evaluate(() => globalThis.webrtcRelease());
+    await waitFor(async () => (await popupState(popup)) === 'Disconnected', 'Disconnected after WebRTC test', 15000).catch(() => undefined);
+    await popup.click('#primary');
+    await waitFor(async () => (await popupState(popup)) === 'Connected', 'reconnected after WebRTC test', 30000);
+    check('reconnects once the other extension releases WebRTC', (await sw.evaluate(() => chrome.privacy.network.webRTCIPHandlingPolicy.get({}))).value === 'disable_non_proxied_udp');
   }
 
   // IDE endpoint through the tunnel.
@@ -476,15 +499,29 @@ try {
   const directProbe = await viaHttpProxy(jbHttp, server.probeUrl);
   check('JetBrains endpoint is really direct after disconnect (probe.test unresolvable)', !directProbe.includes(MARKER));
 
-  // Security: another extension takes over the browser proxy while we are connected. The popup
-  // must never keep saying "Connected" when our setting is no longer in effect.
+  // Security: another extension takes over the browser proxy while we are connected, pointing it at
+  // a trap proxy that demands credentials. The popup must never keep saying "Connected" when our
+  // setting is not in effect, and our tunnel credentials must never be sent to the trap.
+  const attacker = ctx.serviceWorkers().find((w) => !w.url().includes(extId));
+  const trapPort = trapProxy.address().port;
+  const ourProxyInEffect = async () => (await sw.evaluate(() => chrome.proxy.settings.get({}))).levelOfControl === 'controlled_by_this_extension';
+  const invariant = async () => (await popupState(popup)) !== 'Connected' || (await ourProxyInEffect());
+  const toDisconnected = async () => {
+    await attacker.evaluate(() => globalThis.release());
+    await popup.waitForTimeout(700);
+    const l = await popupState(popup);
+    if (l !== 'Disconnected') {
+      if (l === 'Connected' || l === 'Connecting…') await popup.click('#primary');
+      await waitFor(async () => (await popupState(popup)) === 'Disconnected', 'Disconnected', 15000).catch(() => undefined);
+    }
+  };
   {
     await popup.click('#primary');
     await waitFor(async () => (await popupState(popup)) === 'Connected', 'Connected before takeover', 30000);
-    const attacker = ctx.serviceWorkers().find((w) => !w.url().includes(extId));
-    const lvl = await attacker.evaluate(() => globalThis.takeOver());
-    const ours = await sw.evaluate(() => chrome.proxy.settings.get({}));
-    if (ours.levelOfControl === 'controlled_by_this_extension') {
+    const lvl = await attacker.evaluate((p) => globalThis.takeOver(p), trapPort);
+    // Generate traffic while the trap is in effect (before and after our detection).
+    await probe.goto('http://example.test/', { timeout: 5000 }).catch(() => undefined);
+    if (await ourProxyInEffect()) {
       check('proxy takeover by another extension: ours keeps precedence', true, lvl);
     } else {
       const label = await waitFor(async () => {
@@ -494,12 +531,26 @@ try {
       const shown = await popup.evaluate(() => document.body.innerText);
       check('proxy takeover by another extension -> tunnel disconnected, UI no longer says Connected', label !== 'still Connected' && /another extension/i.test(shown), `${label}; attacker=${lvl}`);
     }
-    await attacker.evaluate(() => globalThis.release());
-    await popup.waitForTimeout(500);
-    if ((await popupState(popup)) === 'Connected') {
-      await popup.click('#primary');
-      await waitFor(async () => (await popupState(popup)) !== 'Connected', 'disconnect after takeover test', 15000);
-    }
+    await probe.goto('http://example.test/', { timeout: 5000 }).catch(() => undefined);
+    check('trap proxy never receives our tunnel credentials', trapLog.proxy407.length > 0 && credentialOffered(trapLog.proxy407).length === 0, JSON.stringify(trapLog.proxy407.slice(0, 5)));
+    await toDisconnected();
+  }
+  // Race: the attacker takes over at the same moment the user clicks Connect.
+  {
+    await Promise.all([popup.click('#primary'), attacker.evaluate((p) => globalThis.takeOver(p), trapPort)]);
+    await popup.waitForTimeout(6000);
+    check('connect race with a takeover: never "Connected" without our proxy in effect', await invariant(), `${await popupState(popup)} ours=${await ourProxyInEffect()}`);
+    await toDisconnected();
+  }
+  // Flapping: rapid set/clear by the attacker while connected.
+  {
+    await popup.click('#primary');
+    await waitFor(async () => (await popupState(popup)) === 'Connected', 'Connected before flapping', 30000);
+    await attacker.evaluate((p) => globalThis.flap(p, 25), trapPort);
+    await popup.waitForTimeout(2000);
+    check('proxy flapping by another extension: state stays consistent', await invariant(), `${await popupState(popup)} ours=${await ourProxyInEffect()}`);
+    check('trap proxy never receives our tunnel credentials (races included)', credentialOffered(trapLog.proxy407).length === 0, JSON.stringify(credentialOffered(trapLog.proxy407)));
+    await toDisconnected();
   }
 
   // 8. Browser killed while connected -> on next start there is no stale proxy.
@@ -521,6 +572,8 @@ try {
 } finally {
   if (context) await context.close().catch(() => undefined);
   server?.stop();
+  authSite.close();
+  trapProxy.close();
   const un = spawnSync(host, ['uninstall', '--purge', '--target', runtimeDir], { env, encoding: 'utf8' });
   console.log(`uninstall: ${un.status === 0 ? 'ok' : un.stderr}`);
   check("the user's real Credential Manager key is untouched by the test (incl. purge)", realKeyPresent() === realKeyBefore, `before=${realKeyBefore} after=${realKeyPresent()}`);

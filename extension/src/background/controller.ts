@@ -32,6 +32,8 @@ export interface ProxyControl {
 export interface WebRtcControl {
   /** Apply (true) or restore (false) the WebRTC leak protection; no-op if not permitted. */
   apply(protect: boolean): Promise<void>;
+  /** Null if the leak protection is in effect, otherwise why not (e.g. another extension overrode it). */
+  problem(): Promise<string | null>;
 }
 
 export interface Deps {
@@ -269,7 +271,20 @@ export class Controller {
         }
         this.state.proxyError = null;
         this.state.browserProxied = true;
-        await this.deps.webrtc.apply(await this.deps.webrtcEnabled());
+        const protect = await this.deps.webrtcEnabled();
+        await this.deps.webrtc.apply(protect);
+        // Fail closed: WebRTC protection is on (the default) but not in effect, e.g. another
+        // extension controls the setting. Browsing would leak the real IP address over WebRTC.
+        const rtcProblem = protect ? await this.deps.webrtc.problem() : null;
+        if (rtcProblem) {
+          this.state.proxyError = `${rtcProblem} The tunnel was disconnected.`;
+          this.state.browserProxied = false;
+          await this.deps.proxy.clear();
+          await this.deps.webrtc.apply(false);
+          this.emit();
+          void this.send('disconnect', {});
+          return;
+        }
       } else if (!keepDuringRestart) {
         if (this.state.browserProxied || status.state !== 'connecting') {
           await this.deps.proxy.clear();
@@ -290,7 +305,9 @@ export class Controller {
   proxyControlChanged(): void {
     void this.enqueueProxy(async () => {
       if (!this.state.browserProxied) return;
-      const problem = await this.deps.proxy.controlProblem();
+      // The proxy setting, and (when enabled) the WebRTC leak protection, must both stay ours.
+      const problem =
+        (await this.deps.proxy.controlProblem()) ?? ((await this.deps.webrtcEnabled()) ? await this.deps.webrtc.problem() : null);
       if (!problem) return;
       this.state.browserProxied = false;
       this.state.proxyError = `${problem} The tunnel was disconnected.`;

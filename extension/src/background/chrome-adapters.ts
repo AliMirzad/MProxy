@@ -75,8 +75,22 @@ export const chromeWebRtc: WebRtcControl = {
         await net.webRTCIPHandlingPolicy.clear({});
       }
     } catch {
-      /* not controllable (policy) – nothing we can do */
+      /* not controllable (policy) – problem() reports it */
     }
+  },
+  async problem() {
+    const net = (chrome as unknown as { privacy?: typeof chrome.privacy }).privacy?.network;
+    if (!net) return 'WebRTC leak protection is unavailable in this browser.';
+    const now = await net.webRTCIPHandlingPolicy.get({});
+    // A policy may enforce the same (or the protection may simply be ours): both are fine.
+    if (now.value === 'disable_non_proxied_udp') return null;
+    if (now.levelOfControl === 'controlled_by_other_extensions') {
+      return 'Another extension changed the WebRTC setting, so your real IP address could leak.';
+    }
+    if (now.levelOfControl === 'not_controllable') {
+      return 'A browser policy controls the WebRTC setting, so your real IP address could leak. Turn off WebRTC protection in Settings to connect anyway.';
+    }
+    return 'WebRTC leak protection is not in effect.';
   },
 };
 

@@ -101,5 +101,7 @@ chrome.webRequest.onAuthRequired.addListener(
 // Another extension or a policy can take over the browser proxy at any time; never keep showing
 // "connected" when our setting is no longer in effect.
 chrome.proxy.settings.onChange.addListener(() => controller.proxyControlChanged());
+// Same for the WebRTC leak protection (another extension can override it silently).
+chrome.privacy?.network?.webRTCIPHandlingPolicy?.onChange.addListener(() => controller.proxyControlChanged());
 
 void controller.start();

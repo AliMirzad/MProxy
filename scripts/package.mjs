@@ -11,6 +11,7 @@
 // (see .github/workflows/build.yml for CI builds of both).
 import { execFileSync, spawnSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, readdirSync, chmodSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { hostCandidates } from './target-dir.mjs';
@@ -89,7 +90,24 @@ writeFileSync(
   `Private Proxy runtime ${version}\nprotocol ${readProtocolVersion()}\nxray ${JSON.parse(readFileSync(join(root, 'native/xray/xray.lock.json'), 'utf8')).version}\nextension id ${readFileSync(join(root, 'shared/extension-id.txt'), 'utf8').trim()}\n`,
 );
 
-// 5. Archive
+// 5. Guards: nothing from the adversarial test fixtures or test-only binaries is ever shipped.
+assertNoTestArtifacts(join(root, 'extension/dist'));
+assertNoTestArtifacts(stage);
+
+// 6. Release manifest (component / version / source / SHA-256), inside the runtime bundle and next
+//    to the archives. See docs/release-integrity.md.
+const xlock = JSON.parse(readFileSync(join(root, 'native/xray/xray.lock.json'), 'utf8'));
+const gitRev = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).stdout?.trim() || 'unknown';
+const gitDirty = (spawnSync('git', ['status', '--porcelain'], { cwd: root, encoding: 'utf8' }).stdout || '').trim() !== '';
+const components = [
+  { component: 'native helper', file: exe, version, source: `this repository @ ${gitRev}${gitDirty ? ' (uncommitted changes)' : ''}, cargo build --release --locked` },
+  { component: 'Xray-core', file: `xray/${win ? 'xray.exe' : 'xray'}`, version: xlock.version, source: `https://github.com/XTLS/Xray-core/releases/tag/${xlock.version} (official release asset, verified against native/xray/xray.lock.json)` },
+  ...readdirSync(stage).filter((f) => /\.(cmd|ps1|sh|txt|md)$/i.test(f)).map((f) => ({ component: 'installer/support file', file: f, version, source: `this repository @ ${gitRev}` })),
+].map((c) => ({ ...c, sha256: sha256(join(stage, c.file)) }));
+const manifest = { product: 'MProxy', version, protocol: Number(readProtocolVersion()), platform, extensionId: readFileSync(join(root, 'shared/extension-id.txt'), 'utf8').trim(), gitRevision: gitRev, gitDirty, components };
+writeFileSync(join(stage, 'RELEASE-MANIFEST.json'), JSON.stringify(manifest, null, 2) + '\n');
+
+// 7. Archive
 if (win) {
   const out = join(dist, `${name}.zip`);
   rmSync(out, { force: true });
@@ -101,6 +119,27 @@ if (win) {
   console.log(`\n${out}\n${extZip}`);
   if (args.includes('--pkg')) {
     run('sh', [join(root, 'installers/macos/build-pkg.sh'), stage, version, join(dist, `${name}.pkg`)]);
+  }
+}
+
+// Archives' own checksums (dist/SHA256SUMS.txt) for the distribution channel.
+{
+  const outs = readdirSync(dist).filter((f) => /\.(zip|tar\.gz|pkg)$/.test(f) && f.includes(version));
+  writeFileSync(join(dist, 'SHA256SUMS.txt'), outs.map((f) => `${sha256(join(dist, f))}  ${f}`).join('\n') + '\n');
+  cpSync(join(stage, 'RELEASE-MANIFEST.json'), join(dist, `${name}.manifest.json`));
+  console.log(`${join(dist, 'SHA256SUMS.txt')}`);
+}
+
+function sha256(file) {
+  return createHash('sha256').update(readFileSync(file)).digest('hex');
+}
+
+/** Refuse to package adversarial fixtures (marker) or test-only binaries. */
+function assertNoTestArtifacts(dir) {
+  const walk = (d) => readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(d, e.name)) : [join(d, e.name)]));
+  for (const f of walk(dir)) {
+    if (/sandbox_probe|fixtures|attacker|malicious|impersonator/i.test(f.slice(dir.length))) throw new Error(`test artifact in release: ${f}`);
+    if (readFileSync(f).includes('PP-ADVERSARIAL-FIXTURE')) throw new Error(`adversarial fixture content in release: ${f}`);
   }
 }
 

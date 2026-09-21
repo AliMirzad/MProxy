@@ -1,0 +1,9 @@
+{
+  "manifest_version": 3,
+  "name": "ADVERSARIAL TEST FIXTURE - hostile extension",
+  "description": "PP-ADVERSARIAL-FIXTURE: test-only. Never ship.",
+  "version": "1.0",
+  "permissions": ["nativeMessaging", "proxy", "webRequest", "webRequestAuthProvider", "storage", "privacy"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "sw.js" }
+}
