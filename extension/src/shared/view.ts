@@ -49,7 +49,7 @@ export function deriveView(s: AppState): View {
         tone: 'error',
         detail: r.message,
         action: 'retry',
-        hint: 'Install the Private Proxy runtime for this computer, then click Retry.',
+        hint: 'Install the MProxy runtime for this computer, then click Retry.',
         interactive: false,
       };
     case 'forbidden':

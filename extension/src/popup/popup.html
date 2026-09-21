@@ -2,13 +2,19 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>Private Proxy</title>
+    <title>MProxy</title>
     <link rel="stylesheet" href="popup.css" />
   </head>
   <body>
     <header>
       <button id="nav-back" class="icon" title="Back" aria-label="Back" hidden>&#8592;</button>
-      <h1 id="title">Private Proxy</h1>
+      <div class="brand">
+        <div class="logo" aria-hidden="true">M</div>
+        <div class="brand-text">
+          <h1 id="title">MProxy</h1>
+          <p id="credit" class="credit">created by <b>ali mirzad</b></p>
+        </div>
+      </div>
       <button id="nav-settings" class="icon" title="Settings" aria-label="Settings">&#9881;</button>
     </header>
 
@@ -48,6 +54,7 @@
 
     <!-- Import -->
     <section id="view-import" hidden>
+      <div class="panel">
       <div class="tabs" role="tablist">
         <button role="tab" data-tab="link" aria-selected="true">Link / JSON</button>
         <button role="tab" data-tab="qr" aria-selected="false">QR code</button>
@@ -86,10 +93,12 @@
       </div>
 
       <div id="import-result" class="result" hidden></div>
+      </div>
     </section>
 
     <!-- Settings -->
     <section id="view-settings" hidden>
+      <div class="panel">
       <h2>JetBrains / IDE proxy</h2>
       <label class="check"><input id="jb-enabled" type="checkbox" /> Local proxy endpoint for IDEs</label>
       <div class="grid2">
@@ -109,29 +118,35 @@
       </div>
       <p id="jb-status" class="muted small"></p>
       <div class="row end"><button id="jb-save" type="button">Save</button></div>
-
+      </div>
+      <div class="panel">
       <h2>Privacy</h2>
       <label class="check"><input id="webrtc" type="checkbox" /> Block WebRTC from revealing your real IP while connected (recommended)</label>
-
+      </div>
+      <div class="panel">
       <h2>Servers</h2>
       <select id="srv-filter" aria-label="Show servers"></select>
       <ul id="srv-list" class="list compact"></ul>
       <p id="empty-srv" class="muted small" hidden>No servers.</p>
-
+      </div>
+      <div class="panel">
       <h2>Subscriptions</h2>
       <ul id="sub-list" class="list"></ul>
       <p id="empty-subs" class="muted small" hidden>No subscriptions.</p>
       <label class="check"><input id="sub-private" type="checkbox" /> Allow private-network subscription URLs (e.g. an internal company server)</label>
-
+      </div>
+      <div class="panel">
       <h2>About &amp; diagnostics</h2>
       <p id="versions" class="muted small"></p>
       <label class="check"><input id="debug-log" type="checkbox" /> Verbose diagnostics log (for troubleshooting)</label>
       <div class="row">
         <button id="copy-diag" type="button">Copy diagnostics</button>
       </div>
-
+      </div>
+      <div class="panel">
       <h2>Danger zone</h2>
       <div class="row"><button id="reset-all" class="danger" type="button">Remove all servers</button></div>
+      </div>
       <div id="settings-result" class="result" hidden></div>
     </section>
 

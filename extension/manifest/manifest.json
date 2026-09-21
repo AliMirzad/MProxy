@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Private Proxy",
+  "name": "MProxy",
   "version": "1.0.0",
-  "description": "Private VLESS/VMess (Xray) proxy for this browser, with a local endpoint for JetBrains IDEs.",
+  "description": "MProxy: private VLESS/VMess (Xray) proxy for this browser, with a local endpoint for JetBrains IDEs. Created by Ali Mirzad.",
   "minimum_chrome_version": "110",
   "permissions": ["proxy", "storage", "nativeMessaging", "activeTab", "privacy"],
   "background": {
@@ -10,7 +10,7 @@
     "type": "module"
   },
   "action": {
-    "default_title": "Private Proxy",
+    "default_title": "MProxy",
     "default_popup": "popup.html",
     "default_icon": { "16": "icons/icon-16.png", "32": "icons/icon-32.png", "48": "icons/icon-48.png" }
   },

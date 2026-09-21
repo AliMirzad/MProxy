@@ -51,7 +51,8 @@ function setView(v: typeof view) {
   $('view-settings').hidden = v !== 'settings';
   $('nav-back').hidden = v === 'main';
   $('nav-settings').hidden = v !== 'main';
-  $('title').textContent = v === 'main' ? 'Private Proxy' : v === 'import' ? 'Import' : 'Settings';
+  $('title').textContent = v === 'main' ? 'MProxy' : v === 'import' ? 'Import' : 'Settings';
+  $('credit').hidden = v !== 'main';
   $('import-result').hidden = true;
   $('settings-result').hidden = true;
   if (v === 'settings') void loadSettings();
@@ -73,6 +74,7 @@ function render() {
   const v = deriveView(app);
   const dot = $('status-dot');
   dot.className = `dot ${v.tone}`;
+  $('status-card').dataset.tone = v.tone;
   $('status-label').textContent = v.label;
   const detail = $('status-detail');
   detail.textContent = v.detail ?? '';

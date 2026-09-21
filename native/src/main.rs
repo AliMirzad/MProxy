@@ -179,7 +179,7 @@ fn cli_install(args: &[String]) -> ExitCode {
             for l in lines {
                 println!("  {l}");
             }
-            println!("\nPrivate Proxy runtime installed. Restart your browser, then use the extension.");
+            println!("\nMProxy runtime installed. Restart your browser, then use the extension.");
             ExitCode::SUCCESS
         }
         Err(e) => {
@@ -197,7 +197,7 @@ fn cli_uninstall(args: &[String]) -> ExitCode {
     let interactive = args.iter().any(|a| a == "--interactive");
     let mut purge = args.iter().any(|a| a == "--purge");
     if interactive && !purge {
-        println!("Uninstalling the Private Proxy runtime.");
+        println!("Uninstalling the MProxy runtime.");
         print!("Also delete imported servers and saved credentials? [y/N] ");
         let _ = io::Write::flush(&mut io::stdout());
         let mut s = String::new();
@@ -210,7 +210,7 @@ fn cli_uninstall(args: &[String]) -> ExitCode {
             for l in lines {
                 println!("  {l}");
             }
-            println!("\nPrivate Proxy runtime removed. You can now remove the browser extension.");
+            println!("\nMProxy runtime removed. You can now remove the browser extension.");
             ExitCode::SUCCESS
         }
         Err(e) => {

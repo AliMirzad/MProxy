@@ -1,4 +1,6 @@
-# Private Proxy
+# MProxy
+
+*Created by Ali Mirzad. (Formerly "Private Proxy"; internal identifiers such as the data folder `PrivateProxy` and the host `com.privateproxy.host` are unchanged.)*
 
 A private/internal VLESS/VMess proxy client for Chromium browsers, powered by
 [Xray-core](https://github.com/XTLS/Xray-core) and controlled entirely from a browser extension.

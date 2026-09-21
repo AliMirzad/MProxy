@@ -8,7 +8,7 @@ Private Proxy - native runtime for Windows
    - Does NOT change system proxy, DNS, VPN or any other system settings.
 3. Load the extension (see "Loading the extension" in the project README).
 
-Uninstall: Settings > Apps > "Private Proxy (browser runtime)", or run Uninstall.cmd.
+Uninstall: Settings > Apps > "MProxy (browser runtime)", or run Uninstall.cmd.
 
 If Windows SmartScreen warns about Install.cmd or private-proxy-host.exe: these V1 builds are
 not code-signed. Choose "More info" > "Run anyway" only if you obtained this package from your

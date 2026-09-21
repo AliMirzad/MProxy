@@ -44,7 +44,7 @@ pub fn manifest_json(host_path: &Path, extension_ids: &[String]) -> String {
     let origins: Vec<String> = extension_ids.iter().map(|id| format!("chrome-extension://{id}/")).collect();
     serde_json::to_string_pretty(&serde_json::json!({
         "name": HOST_NAME,
-        "description": "Private Proxy native runtime (manages Xray-core)",
+        "description": "MProxy native runtime (manages Xray-core)",
         "path": host_path.display().to_string(),
         "type": "stdio",
         "allowed_origins": origins,
@@ -218,9 +218,9 @@ mod platform {
         }
         let (u, _) = hkcu.create_subkey(UNINSTALL_KEY).map_err(|e| e.to_string())?;
         let host = o.target_dir.join(host_exe_name());
-        let _ = u.set_value("DisplayName", &"Private Proxy (browser runtime)");
+        let _ = u.set_value("DisplayName", &"MProxy (browser runtime)");
         let _ = u.set_value("DisplayVersion", &crate::NATIVE_VERSION);
-        let _ = u.set_value("Publisher", &"Private Proxy");
+        let _ = u.set_value("Publisher", &"Ali Mirzad");
         let _ = u.set_value("InstallLocation", &o.target_dir.display().to_string());
         let _ = u.set_value("UninstallString", &format!("\"{}\" uninstall --interactive", host.display()));
         let _ = u.set_value("NoModify", &1u32);
