@@ -75,6 +75,7 @@ pub fn parse_vless_uri(link: &str) -> Result<ParsedServer, String> {
     let g = |k: &str| q.get(k).cloned();
 
     let mut warnings = Vec::new();
+    super::fields::check_params(q.iter(), "link parameter", super::fields::VLESS_PARAMS, &mut warnings)?;
     let params = StreamParams {
         net: g("type"),
         header_type: g("headerType"),
@@ -94,7 +95,7 @@ pub fn parse_vless_uri(link: &str) -> Result<ParsedServer, String> {
         pcs: g("pcs"),
         ech: g("ech"),
         extra: g("extra"),
-        allow_insecure: matches!(g("allowInsecure").as_deref(), Some("1") | Some("true")),
+        allow_insecure: [g("allowInsecure"), g("insecure")].iter().any(|v| matches!(v.as_deref(), Some("1") | Some("true"))),
     };
     let st = stream::build(&params, &mut warnings)?;
     let encryption = v::vless_encryption(g("encryption").as_deref())?;

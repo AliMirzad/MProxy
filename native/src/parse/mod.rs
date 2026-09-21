@@ -8,6 +8,7 @@
 //!
 //! Every entry is parsed in isolation: one malformed line never aborts a batch.
 
+pub mod fields;
 mod json;
 mod stream;
 mod vless;
@@ -163,3 +164,6 @@ pub fn parse_qr_payload(text: &str) -> Result<ParseBatch, String> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod security_tests;

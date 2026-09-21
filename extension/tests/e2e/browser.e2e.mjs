@@ -110,7 +110,7 @@ const dataDir = join(tmp, 'data');
 const profileDir = join(tmp, 'profile');
 const host = findHost();
 const browserPath = findBrowser();
-const env = { ...process.env, PRIVATE_PROXY_TEST_MODE: '1', PRIVATE_PROXY_DATA_DIR: dataDir };
+const env = { ...process.env, PRIVATE_PROXY_TEST_MODE: '1', PRIVATE_PROXY_ALLOW_LOOPBACK: '1', PRIVATE_PROXY_DATA_DIR: dataDir };
 let server;
 let context;
 

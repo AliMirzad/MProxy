@@ -239,6 +239,7 @@ pub fn http_path(v: Option<&str>) -> VResult<String> {
     if v.is_empty() {
         return Ok("/".into());
     }
+    no_path_tricks("Path", v)?;
     Ok(if v.starts_with('/') { v.to_string() } else { format!("/{v}") })
 }
 
@@ -247,6 +248,7 @@ pub fn grpc_service_name(v: Option<&str>) -> VResult<String> {
     if v.len() > 512 || v.chars().any(|c| c.is_control() || c.is_whitespace()) {
         return Err("Invalid gRPC service name".into());
     }
+    no_path_tricks("gRPC service name", v)?;
     Ok(v.to_string())
 }
 
@@ -289,6 +291,9 @@ pub fn reality_short_id(v: Option<&str>) -> VResult<Option<String>> {
 
 pub fn spider_x(v: Option<&str>) -> VResult<Option<String>> {
     let v = opt_text("spiderX", v, 256)?;
+    if let Some(s) = &v {
+        no_path_tricks("REALITY spiderX", s)?;
+    }
     Ok(v.map(|s| if s.starts_with('/') { s } else { format!("/{s}") }))
 }
 
@@ -325,23 +330,102 @@ pub fn ech_config_list(v: Option<&str>) -> VResult<Option<String>> {
         None => return Ok(None),
         Some(v) => v,
     };
-    if v.len() > 8192 || v.chars().any(|c| c.is_control() || c.is_whitespace()) {
+    if v.len() > 8192 || !v.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '/' | '=' | '-' | '_' | ':' | '.')) {
         return Err("Invalid ECH config".into());
     }
     Ok(Some(v.to_string()))
 }
 
 const EXTRA_MAX_BYTES: usize = 16 * 1024;
-const EXTRA_OBJECT_KEYS: &[&str] = &["headers", "xmux", "downloadSettings"];
 
-/// Sanitizes an XHTTP `extra` object.
-///
-/// XHTTP gains tuning knobs regularly, so scalar values (strings, numbers, bools, and
-/// `{from,to}` ranges) pass through untouched. Only the object-valued keys we understand
-/// are kept, and `downloadSettings` is rebuilt from an allow-list. This matters because
-/// it is a nested streamSettings, whose `sockopt`/`tlsSettings` could otherwise reach
-/// fields like `masterKeyLog` (writes a file) or `certificateFile` (reads a file).
+/// Rejects values that look like filesystem paths or path traversal in fields that are not file
+/// paths (URL paths, gRPC service names, XHTTP tuning strings): `..` segments, backslashes, UNC
+/// or protocol-relative `//`, `file:` URLs, drive letters, and their percent-encoded forms.
+/// None of these fields is ever used as a local path; this keeps hostile values out of the
+/// generated config altogether.
+pub fn no_path_tricks(field: &str, v: &str) -> VResult<()> {
+    let l = v.to_ascii_lowercase();
+    let drive = l.len() >= 2 && l.as_bytes()[0].is_ascii_alphabetic() && l.as_bytes()[1] == b':';
+    let bad = l.contains('\\')
+        || l.starts_with("//")
+        || l.contains("file:")
+        || l.contains("%2e%2e")
+        || l.contains("%5c")
+        || l.contains("%2f%2f")
+        || l.split(['/', '?', '#', '&', '=']).any(|seg| seg == "..")
+        || drive;
+    if bad {
+        Err(format!("{field} looks like a file path or path traversal"))
+    } else {
+        Ok(())
+    }
+}
+
+fn is_range(o: &Map<String, Value>) -> bool {
+    !o.is_empty() && o.len() <= 2 && o.keys().all(|k| k == "from" || k == "to") && o.values().all(|v| v.as_u64().is_some())
+}
+
+fn valid_header_name(k: &str) -> bool {
+    !k.is_empty() && k.len() <= 64 && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+}
+
+/// One XHTTP tuning value: bool, non-negative integer, `{from,to}` range, or a short printable
+/// token such as "100-1000", "header", "POST".
+fn xhttp_scalar(k: &str, v: &Value) -> VResult<Value> {
+    let ok = match v {
+        Value::Bool(_) => true,
+        Value::Number(n) => n.as_u64().is_some(),
+        Value::Object(o) => is_range(o),
+        Value::String(s) => s.len() <= 128 && s.chars().all(|c| c.is_ascii_graphic()) && no_path_tricks(k, s).is_ok(),
+        _ => false,
+    };
+    if ok {
+        Ok(v.clone())
+    } else {
+        Err(format!("Invalid value for XHTTP setting \"{}\"", truncate(k, 32)))
+    }
+}
+
+fn xhttp_headers(v: &Value) -> VResult<Value> {
+    let o = v.as_object().ok_or("XHTTP headers must be an object")?;
+    let mut h = Map::new();
+    for (hk, hv) in o {
+        let s = hv.as_str().ok_or_else(|| format!("XHTTP header \"{}\" must be a string", truncate(hk, 32)))?;
+        if !valid_header_name(hk) || s.len() > 1024 || s.chars().any(|c| c.is_control()) {
+            return Err(format!("Invalid XHTTP header \"{}\"", truncate(hk, 32)));
+        }
+        h.insert(hk.clone(), Value::String(s.to_string()));
+    }
+    Ok(Value::Object(h))
+}
+
+fn xmux(v: &Value) -> VResult<Value> {
+    let o = v.as_object().ok_or("XHTTP xmux must be an object")?;
+    let mut m = Map::new();
+    for (k, val) in o {
+        if !crate::parse::fields::XMUX.contains(&k.as_str()) {
+            return Err(format!("Unsupported XHTTP xmux field \"{}\"", truncate(k, 32)));
+        }
+        let ok = matches!(val, Value::Number(n) if n.as_u64().is_some())
+            || matches!(val, Value::String(s) if s.len() <= 32 && s.chars().all(|c| c.is_ascii_digit() || c == '-'))
+            || matches!(val, Value::Object(r) if is_range(r));
+        if !ok {
+            return Err(format!("Invalid value for XHTTP xmux \"{}\"", truncate(k, 32)));
+        }
+        m.insert(k.clone(), val.clone());
+    }
+    Ok(Value::Object(m))
+}
+
+/// Validates an XHTTP `extra` object against the allowlist in `parse/fields.rs` and returns the
+/// normalized copy that is placed in the generated config. Unknown keys are rejected (not dropped),
+/// and `downloadSettings` (a nested stream config) is rebuilt field by field, so fields such as
+/// `masterKeyLog`, `certificates` or `sockopt` can never reach Xray through it.
 pub fn sanitize_xhttp_extra(v: &Value, warnings: &mut Vec<String>) -> VResult<Option<Value>> {
+    sanitize_extra(v, warnings, true)
+}
+
+fn sanitize_extra(v: &Value, warnings: &mut Vec<String>, allow_download: bool) -> VResult<Option<Value>> {
     let obj = match v {
         Value::Null => return Ok(None),
         Value::Object(o) => o,
@@ -352,63 +436,49 @@ pub fn sanitize_xhttp_extra(v: &Value, warnings: &mut Vec<String>) -> VResult<Op
     }
     let mut out = Map::new();
     for (k, val) in obj {
-        if !k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') || k.len() > 64 {
-            warnings.push(format!("Ignored XHTTP extra key \"{}\"", truncate(k, 32)));
+        let key = k.as_str();
+        if crate::parse::fields::XHTTP_SCALARS.contains(&key) {
+            out.insert(k.clone(), xhttp_scalar(key, val)?);
             continue;
         }
-        match val {
-            Value::String(_) | Value::Number(_) | Value::Bool(_) => {
-                out.insert(k.clone(), val.clone());
+        match key {
+            "headers" => {
+                out.insert(k.clone(), xhttp_headers(val)?);
             }
-            Value::Object(o) if is_range(o) => {
-                out.insert(k.clone(), val.clone());
+            "xmux" => {
+                out.insert(k.clone(), xmux(val)?);
             }
-            Value::Object(o) if EXTRA_OBJECT_KEYS.contains(&k.as_str()) => match k.as_str() {
-                "headers" => {
-                    let mut h = Map::new();
-                    for (hk, hv) in o {
-                        if let Value::String(s) = hv {
-                            if valid_header_name(hk) && !s.chars().any(|c| c.is_control()) {
-                                h.insert(hk.clone(), Value::String(s.clone()));
-                            }
-                        }
-                    }
-                    out.insert(k.clone(), Value::Object(h));
+            "downloadSettings" if allow_download => {
+                let o = val.as_object().ok_or("XHTTP downloadSettings must be an object")?;
+                out.insert(k.clone(), sanitize_download_settings(o, warnings)?);
+            }
+            "downloadSettings" => return Err("Nested XHTTP downloadSettings are not allowed".into()),
+            "host" => {
+                if let Some(h) = host_header(val.as_str())? {
+                    out.insert(k.clone(), h.into());
                 }
-                "xmux" => {
-                    let mut m = Map::new();
-                    for (mk, mv) in o {
-                        let ok = matches!(mv, Value::String(_) | Value::Number(_))
-                            || matches!(mv, Value::Object(r) if is_range(r));
-                        if ok {
-                            m.insert(mk.clone(), mv.clone());
-                        }
-                    }
-                    out.insert(k.clone(), Value::Object(m));
-                }
-                "downloadSettings" => {
-                    out.insert(k.clone(), sanitize_download_settings(o, warnings)?);
-                }
-                _ => unreachable!(),
-            },
-            _ => warnings.push(format!("Ignored XHTTP extra key \"{}\"", truncate(k, 32))),
+            }
+            "path" => {
+                out.insert(k.clone(), http_path(val.as_str())?.into());
+            }
+            "mode" => {
+                out.insert(k.clone(), xhttp_mode(val.as_str())?.into());
+            }
+            "serverMaxHeaderBytes" => {} // server-side
+            _ => return Err(format!("Unsupported XHTTP extra field \"{}\"", truncate(k, 32))),
         }
     }
     Ok(Some(Value::Object(out)))
 }
 
-fn is_range(o: &Map<String, Value>) -> bool {
-    o.len() <= 2 && o.keys().all(|k| k == "from" || k == "to") && o.values().all(Value::is_number)
-}
-
-fn valid_header_name(k: &str) -> bool {
-    !k.is_empty() && k.len() <= 64 && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
-}
-
 fn sanitize_download_settings(o: &Map<String, Value>, warnings: &mut Vec<String>) -> VResult<Value> {
+    use crate::parse::fields;
+    fields::check(o, "downloadSettings", fields::DOWNLOAD_SETTINGS, warnings)?;
     let mut out = Map::new();
     if let Some(a) = o.get("address").and_then(Value::as_str) {
-        out.insert("address".into(), Value::String(address(a)?));
+        let a = address(a)?;
+        crate::netpolicy::check_server_address(&a)?;
+        out.insert("address".into(), Value::String(a));
     }
     if let Some(p) = o.get("port") {
         out.insert("port".into(), Value::from(port_from_json(p)?));
@@ -419,11 +489,11 @@ fn sanitize_download_settings(o: &Map<String, Value>, warnings: &mut Vec<String>
     }
     out.insert("network".into(), Value::String("xhttp".into()));
     let security = o.get("security").and_then(Value::as_str).unwrap_or("none");
-    out.insert("security".into(), Value::String(security.into()));
     match security {
         "none" => {}
         "tls" => {
             let t = o.get("tlsSettings").and_then(Value::as_object).cloned().unwrap_or_default();
+            fields::check(&t, "downloadSettings.tlsSettings", fields::TLS, warnings)?;
             let mut ts = Map::new();
             if let Some(s) = server_name("SNI", t.get("serverName").and_then(Value::as_str))? {
                 ts.insert("serverName".into(), s.into());
@@ -442,6 +512,7 @@ fn sanitize_download_settings(o: &Map<String, Value>, warnings: &mut Vec<String>
         }
         "reality" => {
             let r = o.get("realitySettings").and_then(Value::as_object).cloned().unwrap_or_default();
+            fields::check(&r, "downloadSettings.realitySettings", fields::REALITY, warnings)?;
             let mut rs = Map::new();
             let sn = server_name("REALITY SNI", r.get("serverName").and_then(Value::as_str))?
                 .ok_or("REALITY SNI is missing in downloadSettings")?;
@@ -460,26 +531,32 @@ fn sanitize_download_settings(o: &Map<String, Value>, warnings: &mut Vec<String>
         }
         other => return Err(format!("Unsupported downloadSettings security \"{}\"", truncate(other, 20))),
     }
-    if let Some(x) = o.get("xhttpSettings").and_then(Value::as_object) {
+    out.insert("security".into(), Value::String(security.into()));
+    if let Some(x) = o.get("xhttpSettings").or_else(|| o.get("splithttpSettings")).and_then(Value::as_object) {
+        let mut merged = Map::new();
+        for (k, v) in x {
+            if k == "extra" {
+                if let Some(e) = v.as_object() {
+                    merged.extend(e.clone());
+                }
+            } else if fields::XHTTP_SCALARS.contains(&k.as_str()) || fields::lookup(fields::XHTTP, k).is_some() {
+                merged.insert(k.clone(), v.clone());
+            } else {
+                return Err(format!("Unsupported field downloadSettings.xhttpSettings.{}", truncate(k, 32)));
+            }
+        }
         let mut xs = Map::new();
-        xs.insert("path".into(), http_path(x.get("path").and_then(Value::as_str))?.into());
-        if let Some(h) = host_header(x.get("host").and_then(Value::as_str))? {
+        xs.insert("path".into(), http_path(merged.remove("path").as_ref().and_then(Value::as_str))?.into());
+        if let Some(h) = host_header(merged.remove("host").as_ref().and_then(Value::as_str))? {
             xs.insert("host".into(), h.into());
         }
-        xs.insert("mode".into(), xhttp_mode(x.get("mode").and_then(Value::as_str))?.into());
-        if let Some(e) = x.get("extra") {
-            let mut e = e.clone();
-            if let Value::Object(m) = &mut e {
-                m.remove("downloadSettings"); // no recursion
-            }
-            if let Some(e) = sanitize_xhttp_extra(&e, warnings)? {
-                xs.insert("extra".into(), e);
+        xs.insert("mode".into(), xhttp_mode(merged.remove("mode").as_ref().and_then(Value::as_str))?.into());
+        if let Some(Value::Object(e)) = sanitize_extra(&Value::Object(merged), warnings, false)? {
+            if !e.is_empty() {
+                xs.insert("extra".into(), Value::Object(e));
             }
         }
         out.insert("xhttpSettings".into(), Value::Object(xs));
-    }
-    if o.contains_key("sockopt") {
-        warnings.push("Ignored downloadSettings.sockopt".into());
     }
     Ok(Value::Object(out))
 }
@@ -487,6 +564,7 @@ fn sanitize_download_settings(o: &Map<String, Value>, warnings: &mut Vec<String>
 /// Cross-field validation of a complete parsed server. Called by every parser.
 pub fn server(p: &mut ParsedServer) -> VResult<()> {
     let m = &p.meta;
+    crate::netpolicy::check_server_address(&m.address)?;
     if let Security::Reality { .. } = m.security {
         if !matches!(m.transport, Transport::Raw { .. } | Transport::Xhttp { .. } | Transport::Grpc { .. }) {
             return Err(format!("REALITY cannot be used with the {} transport", m.transport.display()));
@@ -605,33 +683,54 @@ mod tests {
     }
 
     #[test]
-    fn xhttp_extra_sanitized() {
+    fn xhttp_extra_allowlist() {
         let mut w = vec![];
-        let v = json!({
+        let ok = json!({
             "xPaddingBytes": "100-1000",
             "noGRPCHeader": false,
             "scMaxEachPostBytes": {"from": 1, "to": 2},
-            "headers": {"X-Test": "1", "Bad Header": "x"},
-            "xmux": {"maxConcurrency": "16-32", "evil": {"nested": true}},
-            "unknownObject": {"a": 1},
+            "headers": {"X-Test": "1"},
+            "xmux": {"maxConcurrency": "16-32", "cMaxReuseTimes": 0},
             "downloadSettings": {
                 "address": "dl.example.com", "port": 443, "network": "xhttp", "security": "tls",
-                "tlsSettings": {"serverName": "dl.example.com", "masterKeyLog": "/tmp/keys", "certificates": [{"certificateFile": "/etc/passwd"}]},
-                "xhttpSettings": {"path": "/dl", "extra": {"downloadSettings": {"address": "loop"}}},
-                "sockopt": {"dialerProxy": "x"}
+                "tlsSettings": {"serverName": "dl.example.com"},
+                "xhttpSettings": {"path": "/dl", "xPaddingBytes": "1-2"}
             }
         });
-        let out = sanitize_xhttp_extra(&v, &mut w).unwrap().unwrap();
-        let s = out.to_string();
-        assert!(!s.contains("masterKeyLog"));
-        assert!(!s.contains("certificateFile"));
-        assert!(!s.contains("sockopt"));
-        assert!(!s.contains("unknownObject"));
-        assert!(!s.contains("Bad Header"));
-        assert!(!s.contains("evil"));
-        assert!(!s.contains("loop"));
+        let out = sanitize_xhttp_extra(&ok, &mut w).unwrap().unwrap();
         assert_eq!(out["xPaddingBytes"], "100-1000");
         assert_eq!(out["downloadSettings"]["tlsSettings"]["serverName"], "dl.example.com");
-        assert!(!w.is_empty());
+        assert_eq!(out["downloadSettings"]["xhttpSettings"]["extra"]["xPaddingBytes"], "1-2");
+
+        // Every one of these must reject the entry (not be silently dropped or forwarded).
+        let bad = [
+            json!({"unknownKnob": 1}),
+            json!({"headers": {"Bad Header": "x"}}),
+            json!({"xmux": {"evil": {"nested": true}}}),
+            json!({"xPaddingKey": "../../etc/passwd"}),
+            json!({"xPaddingKey": "C:\\Windows"}),
+            json!({"downloadSettings": {"address": "dl.example.com", "security": "tls", "tlsSettings": {"masterKeyLog": "/tmp/keys"}}}),
+            json!({"downloadSettings": {"address": "dl.example.com", "security": "tls", "tlsSettings": {"certificates": [{"certificateFile": "/etc/passwd"}]}}}),
+            json!({"downloadSettings": {"address": "dl.example.com", "sockopt": {"dialerProxy": "x"}}}),
+            json!({"downloadSettings": {"address": "127.0.0.1"}}),
+            json!({"downloadSettings": {"address": "169.254.169.254"}}),
+            json!({"downloadSettings": {"address": "dl.example.com", "xhttpSettings": {"extra": {"downloadSettings": {"address": "x.example.com"}}}}}),
+        ];
+        for b in bad {
+            assert!(sanitize_xhttp_extra(&b, &mut w).is_err(), "accepted {b}");
+        }
+    }
+
+    #[test]
+    fn path_tricks_rejected() {
+        for p in ["/../etc/passwd", "/a/..", "..\\x", "\\\\server\\share", "//evil.example/x", "file:///etc/passwd", "/%2e%2e/x", "C:/Windows", "/a%5cb"] {
+            assert!(http_path(Some(p)).is_err(), "{p}");
+        }
+        for p in ["/ws", "/ws?ed=2048", "/a/b.c/d", "/..hidden-but-not-traversal"] {
+            assert!(http_path(Some(p)).is_ok(), "{p}");
+        }
+        assert!(grpc_service_name(Some("../../x")).is_err());
+        assert!(grpc_service_name(Some("my.Service/Tun")).is_ok());
+        assert!(spider_x(Some("/../x")).is_err());
     }
 }

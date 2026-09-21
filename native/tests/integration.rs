@@ -210,6 +210,8 @@ struct HostOpts {
     probe_port: u16,
     jb_socks: u16,
     jb_http: u16,
+    /// Test servers listen on 127.0.0.1; release builds refuse loopback destinations.
+    allow_loopback: bool,
 }
 
 impl Host {
@@ -224,6 +226,7 @@ impl Host {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_private-proxy-host"));
         cmd.arg(origin())
             .env("PRIVATE_PROXY_TEST_MODE", "1")
+            .env("PRIVATE_PROXY_ALLOW_LOOPBACK", if o.allow_loopback { "1" } else { "0" })
             .env("PRIVATE_PROXY_DATA_DIR", data.path())
             .env("PRIVATE_PROXY_INSECURE_FILE_KEY", "1")
             .env("PRIVATE_PROXY_PROBE_URL", format!("probe.test:{}/generate_204", o.probe_port))
@@ -436,7 +439,7 @@ fn links(e: &Env) -> Vec<(&'static str, String)> {
 }
 
 fn opts(e: &Env) -> HostOpts {
-    HostOpts { xray: Some(e.xray.clone()), probe_port: e.target.port, jb_socks: free_port(), jb_http: free_port() }
+    HostOpts { xray: Some(e.xray.clone()), probe_port: e.target.port, jb_socks: free_port(), jb_http: free_port(), allow_loopback: true }
 }
 
 // ================================================================ tests
@@ -631,7 +634,7 @@ fn failures_and_idempotency() {
 
 #[test]
 fn xray_missing_is_reported() {
-    let o = HostOpts { xray: None, probe_port: 1, jb_socks: free_port(), jb_http: free_port() };
+    let o = HostOpts { xray: None, probe_port: 1, jb_socks: free_port(), jb_http: free_port(), allow_loopback: true };
     let mut h = Host::start(&o);
     let hello = h.ok("hello", json!({"protocolVersion": 1, "extensionVersion": "test"}));
     assert_eq!(hello["xrayAvailable"], false);
@@ -644,7 +647,7 @@ fn xray_missing_is_reported() {
 #[test]
 fn rejected_by_xray_validation() {
     let _ = require_xray!();
-    let o = HostOpts { xray: xray_path(), probe_port: 1, jb_socks: free_port(), jb_http: free_port() };
+    let o = HostOpts { xray: xray_path(), probe_port: 1, jb_socks: free_port(), jb_http: free_port(), allow_loopback: true };
     let mut h = Host::start(&o);
     // Structurally valid for our parser but rejected by Xray's own validation (-test):
     // a VLESS Encryption string with a bogus key.
@@ -685,7 +688,7 @@ fn subscriptions_add_update_fail() {
     let l3 = format!("vless://{TEST_UUID}@c.example.com:443?security=tls#C");
     *body.lock().unwrap() = base64::engine::general_purpose::STANDARD.encode(format!("{l1}\n{l2}\nss://x@y:1#ss\nvless://bad"));
 
-    let o = HostOpts { xray: xray_path(), probe_port: 1, jb_socks: free_port(), jb_http: free_port() };
+    let o = HostOpts { xray: xray_path(), probe_port: 1, jb_socks: free_port(), jb_http: free_port(), allow_loopback: true };
     let mut h = Host::start(&o);
     let url = format!("http://127.0.0.1:{sport}/sub?token=SECRET123");
     let r = h.ok("addSubscription", json!({"name": "Work", "url": url}));
@@ -721,4 +724,401 @@ fn subscriptions_add_update_fail() {
     // Delete subscription together with its servers.
     h.ok("deleteSubscription", json!({"id": sub_id, "deleteServers": true}));
     assert_eq!(h.ok("listServers", json!({}))["servers"].as_array().unwrap().len(), 0);
+}
+
+// ================================================================ security (host-compromise prevention)
+//
+// These tests exercise the real helper binary, the real (restricted) Xray process and the OS
+// mechanisms themselves. They are the evidence referenced by docs/security-gate.md.
+
+/// Listening sockets of `pid` as (protocol, local address).
+fn listeners_of(pid: u32) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    #[cfg(windows)]
+    {
+        let netstat = PathBuf::from(std::env::var("SystemRoot").unwrap_or("C:\\Windows".into())).join("System32").join("NETSTAT.EXE");
+        for proto in ["TCP", "TCPv6", "UDP", "UDPv6"] {
+            let o = Command::new(&netstat).args(["-ano", "-p", proto]).output().unwrap();
+            for line in String::from_utf8_lossy(&o.stdout).lines() {
+                let f: Vec<&str> = line.split_whitespace().collect();
+                let is_udp = proto.starts_with("UDP");
+                let (ok, owner) = if is_udp { (f.len() == 4, f.get(3)) } else { (f.len() == 5 && f[3] == "LISTENING", f.get(4)) };
+                if ok && owner.and_then(|p| p.parse::<u32>().ok()) == Some(pid) {
+                    out.push((proto.to_string(), f[1].to_string()));
+                }
+            }
+        }
+    }
+    #[cfg(unix)]
+    {
+        for (flag, proto) in [("-iTCP", "TCP"), ("-iUDP", "UDP")] {
+            let mut c = Command::new("lsof");
+            c.args(["-nP", "-a", "-p", &pid.to_string(), flag]);
+            if proto == "TCP" {
+                c.arg("-sTCP:LISTEN");
+            }
+            if let Ok(o) = c.output() {
+                for line in String::from_utf8_lossy(&o.stdout).lines().skip(1) {
+                    if let Some(addr) = line.split_whitespace().nth(8) {
+                        out.push((proto.to_string(), addr.to_string()));
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn xray_isolation_and_listeners() {
+    let _ = require_xray!();
+    let e = env().unwrap();
+    let o = opts(&e);
+    let mut h = Host::start(&o);
+    h.ok("hello", json!({"protocolVersion": 1, "extensionVersion": "test"}));
+    let (_, link) = links(&e).pop().unwrap(); // REALITY + Vision
+    let imp = h.ok("importText", json!({"text": link, "source": "paste"}));
+    let id = imp["serverIds"][0].as_str().unwrap().to_string();
+    let st = h.connect_and_wait(&id);
+    assert_eq!(st["state"], "connected", "{st}");
+    let browser_port = st["proxy"]["port"].as_u64().unwrap() as u16;
+    let d = h.ok("getDiagnostics", json!({}));
+    assert_eq!(d["xrayVerified"], true, "{d}");
+    assert_eq!(d["xrayPinnedSha256"].as_str().unwrap().len(), 64);
+    let xray_pid = d["xrayPid"].as_u64().unwrap() as u32;
+
+    // Every listener belongs to Xray, is on 127.0.0.1, and is one of the three expected ports.
+    let xl = listeners_of(xray_pid);
+    eprintln!("xray listeners: {xl:?}");
+    let expected: Vec<String> = [browser_port, o.jb_socks, o.jb_http].iter().map(|p| format!("127.0.0.1:{p}")).collect();
+    assert_eq!(xl.len(), 3, "unexpected listeners: {xl:?}");
+    for (proto, addr) in &xl {
+        assert!(proto.starts_with("TCP"), "{proto} {addr}");
+        assert!(expected.contains(addr), "unexpected listener {proto} {addr}");
+    }
+    let helper_pid = h.child.id();
+    assert!(listeners_of(helper_pid).is_empty(), "the helper must not listen on any socket");
+
+    #[cfg(windows)]
+    {
+        use ppcore::winproc::{ChildProc, Restrictions, Stdio as PStdio};
+        // The OS reports Xray at Low integrity with the creation-time policies in force.
+        let iso = &d["xrayIsolation"];
+        assert_eq!(iso["integrity"], "low", "{d}");
+        assert_eq!(iso["childProcessesBlocked"], true, "{d}");
+        assert_eq!(iso["extensionPointsDisabled"], true, "{d}");
+        assert_eq!(iso["remoteImagesBlocked"], true, "{d}");
+        // The data directory is private and carries the no-read-up label.
+        let prot = d["dataDirProtection"].as_str().unwrap();
+        assert!(prot.starts_with("D:P") && !prot.contains(";;;WD)") && !prot.contains(";;;BU)") && !prot.contains(";;;AU)"), "{prot}");
+        assert!(prot.contains("(ML;") && prot.contains("NR"), "{prot}");
+
+        // What a compromised Xray could do at Low integrity, demonstrated with cmd.exe under the
+        // same token: it can neither read the stored credentials nor write into the user profile.
+        let data_dir = PathBuf::from(d["dataDir"].as_str().unwrap());
+        let secrets = data_dir.join("secrets.bin");
+        assert!(secrets.is_file());
+        let cmd = PathBuf::from(std::env::var("SystemRoot").unwrap()).join("System32").join("cmd.exe");
+        let run = |r: Restrictions, args: &[&str]| -> (u32, usize) {
+            let mut c = ChildProc::spawn_with(&cmd, args, &data_dir, PStdio { stdin: false, stdout: true, stderr: true }, r).unwrap();
+            let mut out = Vec::new();
+            let _ = c.stdout.take().unwrap().read_to_end(&mut out);
+            (c.wait().unwrap(), out.len())
+        };
+        let low = Restrictions { low_integrity: true, mitigations: false, no_child_processes: false, job_limits: false };
+        let medium = Restrictions { low_integrity: false, ..low };
+        let target = secrets.to_string_lossy().to_string();
+        let (code_med, bytes_med) = run(medium, &["/C", "type", &target]);
+        assert!(code_med == 0 && bytes_med > 0, "control: Medium integrity can read it");
+        let (code_low, bytes_low) = run(low, &["/C", "type", &target]);
+        assert!(code_low != 0 && bytes_low == 0, "Low integrity read the secrets file (exit {code_low}, {bytes_low} bytes)");
+        let probe = PathBuf::from(std::env::var("USERPROFILE").unwrap()).join(format!("pp-lowil-probe-{}.txt", std::process::id()));
+        let _ = run(low, &["/C", &format!("echo x> \"{}\"", probe.display())]);
+        let created = probe.exists();
+        let _ = std::fs::remove_file(&probe);
+        assert!(!created, "Low integrity could write into the user profile");
+    }
+}
+
+#[test]
+fn hostile_native_messages() {
+    let o = HostOpts { xray: xray_path(), probe_port: 1, jb_socks: free_port(), jb_http: free_port(), allow_loopback: true };
+    let mut h = Host::start(&o);
+    h.ok("hello", json!({"protocolVersion": 1, "extensionVersion": "test"}));
+    // No generic OS operations exist.
+    for cmd in ["exec", "executeCommand", "runProcess", "openFile", "writeFile", "downloadAndExecute", "installPackage", "runScript", "shell", "powershell", "cmd", "bash", "setXrayArgs", "setEnv"] {
+        let r = h.req(cmd, json!({"command": "calc.exe", "path": "C:\\Windows\\System32\\calc.exe", "args": ["-c", "id"]}));
+        assert_eq!(r["error"]["code"], "INVALID_REQUEST", "{cmd}: {r}");
+    }
+    // Paths, traversal and metacharacters in ids are rejected before any lookup.
+    for id in ["..\\..\\Windows\\System32", "../../etc/passwd", "C:\\x", "\\\\host\\share", "file:///etc/passwd", "$(id)", "a;b"] {
+        for cmd in ["deleteServer", "selectServer", "updateSubscription"] {
+            let r = h.req(cmd, json!({"id": id}));
+            assert_eq!(r["error"]["code"], "INVALID_REQUEST", "{cmd} {id}: {r}");
+        }
+    }
+    // Extra fields that would steer the helper are refused, not ignored.
+    for (cmd, args) in [
+        ("setSettings", json!({"xrayPath": "C:\\evil.exe"})),
+        ("setSettings", json!({"dataDir": "C:\\Users\\Public"})),
+        ("connect", json!({"serverId": TEST_UUID, "xrayArgs": ["-c", "http://evil/config"]})),
+        ("importText", json!({"text": "x", "source": "paste", "path": "C:\\secrets.txt"})),
+        ("importText", json!({"text": "x", "source": "url"})),
+    ] {
+        let r = h.req(cmd, args.clone());
+        assert_eq!(r["error"]["code"], "INVALID_REQUEST", "{cmd} {args}: {r}");
+    }
+    // Malformed frames: not JSON / not an object / no id -> protocolError event, helper keeps running.
+    h.send_raw(b"\xff\xfe not json");
+    h.send_raw(b"[1,2,3]");
+    h.send_raw(br#"{"cmd":"getStatus"}"#);
+    assert_eq!(h.ok("getStatus", json!({}))["state"], "disconnected");
+
+    // Metadata APIs never return credentials.
+    let pbk = "IYmFOdB-5LkWj4xG_qNnekepkVTEG_VLr2PbHV9zT0o";
+    let name = "$(calc) `id` | & > %COMSPEC% ..\\..\\";
+    let enc: String = name.bytes().map(|b| format!("%{b:02X}")).collect();
+    let link = format!("vless://{TEST_UUID}@srv.example.com:443?type=tcp&security=reality&sni=www.example.com&pbk={pbk}&sid=ab12#{enc}");
+    let imp = h.ok("importText", json!({"text": link, "source": "paste"}));
+    let id = imp["serverIds"][0].as_str().unwrap().to_string();
+    let list = h.ok("listServers", json!({}));
+    let s = list.to_string();
+    assert!(!s.contains(TEST_UUID) && !s.contains(pbk) && !s.contains("ab12"), "{s}");
+    assert_eq!(list["servers"][0]["name"], name, "hostile names stay literal data");
+    for cmd in ["getStatus", "getSettings", "getDiagnostics"] {
+        let v = h.ok(cmd, json!({})).to_string();
+        assert!(!v.contains(TEST_UUID) && !v.contains(pbk), "{cmd} leaked a secret: {v}");
+    }
+    let r = h.ok("renameServer", json!({"id": id, "name": "\"; rm -rf / #"}));
+    assert_eq!(r, json!({}));
+
+    // Oversized frame (just over the 8 MiB cap): the helper closes the connection and exits,
+    // stopping Xray (the IDE passthrough ports close).
+    let stdin = h.child.stdin.as_mut().unwrap();
+    let _ = stdin.write_all(&((8 * 1024 * 1024 + 1) as u32).to_ne_bytes());
+    let _ = stdin.flush();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while h.child.try_wait().unwrap().is_none() {
+        assert!(Instant::now() < deadline, "helper did not exit after an oversized message");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    std::thread::sleep(Duration::from_millis(300));
+    assert!(!port_open(o.jb_http) && !port_open(o.jb_socks), "Xray survived the helper");
+}
+
+fn raw_helper(args: &[&str], data: &Path) -> Command {
+    let mut c = Command::new(env!("CARGO_BIN_EXE_private-proxy-host"));
+    c.args(args)
+        .env("PRIVATE_PROXY_TEST_MODE", "1")
+        .env("PRIVATE_PROXY_DATA_DIR", data)
+        .env("PRIVATE_PROXY_INSECURE_FILE_KEY", "1")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    c
+}
+
+fn run_with_timeout(mut c: Command) -> (Option<i32>, Vec<u8>) {
+    let mut child = c.spawn().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if let Some(st) = child.try_wait().unwrap() {
+            let mut out = Vec::new();
+            let _ = child.stdout.take().unwrap().read_to_end(&mut out);
+            return (st.code(), out);
+        }
+        if Instant::now() > deadline {
+            let _ = child.kill();
+            panic!("helper did not exit");
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+#[test]
+fn unauthorized_callers_are_rejected() {
+    let data = tempfile::tempdir().unwrap();
+    // Another extension (not in allowed_origins) - Chromium would refuse it already; the helper
+    // re-checks the origin and exits without speaking the protocol.
+    for origin in [
+        "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/",
+        &format!("{}evil/", origin()),
+        "chrome-extension://",
+    ] {
+        let (code, out) = run_with_timeout(raw_helper(&[origin], data.path()));
+        assert_eq!(code, Some(3), "{origin}");
+        assert!(out.is_empty(), "{origin}: spoke to an unauthorized caller");
+    }
+    // Anything that is not a browser launch or a documented CLI verb does nothing.
+    for args in [&["https://evil.example/"][..], &["--data-dir", "C:\\x"], &["file:///etc/passwd"], &["exec", "calc.exe"]] {
+        let (code, out) = run_with_timeout(raw_helper(args, data.path()));
+        assert_eq!(code, Some(2), "{args:?}");
+        assert!(out.is_empty());
+    }
+    assert!(!data.path().join("secrets.bin").exists());
+}
+
+#[test]
+fn tampered_xray_is_never_executed() {
+    let Some(real) = xray_path() else { return };
+    let dir = tempfile::tempdir().unwrap();
+    // A one-byte change and a completely different executable are both refused.
+    let patched = dir.path().join("patched").join(if cfg!(windows) { "xray.exe" } else { "xray" });
+    std::fs::create_dir_all(patched.parent().unwrap()).unwrap();
+    let mut bytes = std::fs::read(&real).unwrap();
+    let n = bytes.len();
+    bytes[n / 2] ^= 0x01;
+    std::fs::write(&patched, &bytes).unwrap();
+    let other = dir.path().join("other").join(if cfg!(windows) { "xray.exe" } else { "xray" });
+    std::fs::create_dir_all(other.parent().unwrap()).unwrap();
+    std::fs::copy(if cfg!(windows) { PathBuf::from(std::env::var("SystemRoot").unwrap()).join("System32").join("cmd.exe") } else { PathBuf::from("/bin/sh") }, &other).unwrap();
+    for bin in [patched, other] {
+        let o = HostOpts { xray: Some(bin.clone()), probe_port: 1, jb_socks: free_port(), jb_http: free_port(), allow_loopback: true };
+        let mut h = Host::start(&o);
+        let hello = h.ok("hello", json!({"protocolVersion": 1, "extensionVersion": "test"}));
+        assert_eq!(hello["xrayAvailable"], false, "{}", bin.display());
+        let st = h.ok("getStatus", json!({}));
+        assert_eq!(st["jetbrains"]["mode"], "off", "passthrough must not start: {st}");
+        let imp = h.ok("importText", json!({"text": format!("vless://{TEST_UUID}@srv.example.com:443?security=tls#x"), "source": "paste"}));
+        let st = h.connect_and_wait(imp["serverIds"][0].as_str().unwrap());
+        assert_eq!(st["error"]["code"], "XRAY_FAILED", "{st}");
+        assert!(st["error"]["message"].as_str().unwrap().contains("integrity"), "{st}");
+        assert!(h.ok("getDiagnostics", json!({}))["xrayPid"].is_null());
+        assert!(!port_open(o.jb_http));
+    }
+}
+
+#[test]
+fn linked_data_dir_is_refused() {
+    let t = tempfile::tempdir().unwrap();
+    let real = t.path().join("real");
+    std::fs::create_dir(&real).unwrap();
+    let link = t.path().join("link");
+    #[cfg(windows)]
+    let made = Command::new(PathBuf::from(std::env::var("SystemRoot").unwrap()).join("System32").join("cmd.exe"))
+        .args(["/C", "mklink", "/J"])
+        .arg(&link)
+        .arg(&real)
+        .output()
+        .unwrap()
+        .status
+        .success();
+    #[cfg(unix)]
+    let made = std::os::unix::fs::symlink(&real, &link).is_ok();
+    assert!(made);
+    let (code, out) = run_with_timeout(raw_helper(&[&origin()], &link));
+    assert_eq!(code, Some(4), "helper must refuse a data directory that is a link/junction");
+    assert!(out.is_empty());
+    assert_eq!(std::fs::read_dir(&real).unwrap().count(), 0, "nothing may be written through the link");
+}
+
+#[test]
+fn subscription_ssrf_is_blocked() {
+    // A local service that must never receive a request.
+    let hits = Arc::new(Mutex::new(0u32));
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = l.local_addr().unwrap().port();
+    let h2 = hits.clone();
+    std::thread::spawn(move || {
+        for s in l.incoming().flatten() {
+            *h2.lock().unwrap() += 1;
+            drop(s);
+        }
+    });
+    // Release policy (no loopback allowance).
+    let o = HostOpts { xray: xray_path(), probe_port: 1, jb_socks: free_port(), jb_http: free_port(), allow_loopback: false };
+    let mut h = Host::start(&o);
+    for url in [
+        format!("http://127.0.0.1:{port}/sub"),
+        format!("https://127.0.0.1:{port}/sub"),
+        format!("https://localhost:{port}/sub"),
+        format!("https://[::1]:{port}/sub"),
+        format!("https://2130706433:{port}/sub"),
+        "https://169.254.169.254/latest/meta-data/iam/security-credentials/".into(),
+        "https://metadata.google.internal/computeMetadata/v1/".into(),
+        "https://[fe80::1]/".into(),
+        "https://0.0.0.0/".into(),
+        "file:///C:/Windows/win.ini".into(),
+        "ftp://sub.example.com/x".into(),
+    ] {
+        let r = h.req("addSubscription", json!({"name": "x", "url": url}));
+        assert_eq!(r["error"]["code"], "INVALID_CONFIG", "{url}: {r}");
+    }
+    let r = h.req("addSubscription", json!({"name": "x", "url": "https://10.255.255.1/sub"}));
+    assert!(r["error"]["message"].as_str().unwrap().contains("private network"), "{r}");
+    h.ok("setSettings", json!({"allowPrivateSubscriptionHosts": true}));
+    let r = h.req("addSubscription", json!({"name": "x", "url": format!("https://127.0.0.1:{port}/sub")}));
+    assert_eq!(r["error"]["code"], "INVALID_CONFIG", "loopback stays blocked with the private-network setting: {r}");
+
+    // DNS rebinding: a public name that resolves to 127.0.0.1 (only checked when DNS is available).
+    use std::net::ToSocketAddrs;
+    if ("localtest.me", 443).to_socket_addrs().map(|mut a| a.any(|x| x.ip().is_loopback())).unwrap_or(false) {
+        let r = h.req("addSubscription", json!({"name": "x", "url": format!("https://localtest.me:{port}/sub")}));
+        assert_eq!(r["error"]["code"], "SUBSCRIPTION_FAILED", "{r}");
+        assert!(r["error"]["message"].as_str().unwrap().contains("this computer"), "{r}");
+    } else {
+        eprintln!("note: DNS-rebinding check skipped (localtest.me not resolvable)");
+    }
+    // Proxy servers on loopback are refused too.
+    let r = h.req("importText", json!({"text": format!("vless://{TEST_UUID}@127.0.0.1:{port}?security=none#local"), "source": "paste"}));
+    assert_eq!(r["error"]["code"], "INVALID_CONFIG", "{r}");
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(*hits.lock().unwrap(), 0, "a blocked destination received a connection");
+}
+
+#[test]
+fn malicious_subscription_bodies() {
+    use base64::Engine;
+    let body = Arc::new(Mutex::new(Vec::<u8>::new()));
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    let sport = l.local_addr().unwrap().port();
+    let b2 = body.clone();
+    std::thread::spawn(move || {
+        for s in l.incoming().flatten() {
+            let mut s = s;
+            let mut buf = [0u8; 4096];
+            let _ = s.read(&mut buf);
+            let b = b2.lock().unwrap().clone();
+            let _ = s.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", b.len()).as_bytes());
+            let _ = s.write_all(&b);
+        }
+    });
+    let o = HostOpts { xray: xray_path(), probe_port: 1, jb_socks: free_port(), jb_http: free_port(), allow_loopback: true };
+    let mut h = Host::start(&o);
+    let url = format!("http://127.0.0.1:{sport}/sub");
+    let ob = |extra: &str| {
+        format!(r#"{{"protocol":"vless","settings":{{"address":"s.example.com","port":443,"id":"{TEST_UUID}"}},"streamSettings":{{"security":"tls"{extra}}}}}"#)
+    };
+    // One clean entry among hostile ones: only the clean one is imported.
+    let arr = format!(
+        "[{},{},{},{}]",
+        ob(""),
+        ob(r#","tlsSettings":{"masterKeyLog":"C:\\Users\\Public\\keys.log"}"#),
+        ob(r#","sockopt":{"dialerProxy":"x"}"#),
+        ob(r#","tlsSettings":{"certificates":[{"keyFile":"/etc/shadow"}]}"#)
+    );
+    *body.lock().unwrap() = arr.into_bytes();
+    let r = h.ok("addSubscription", json!({"name": "mixed", "url": url}));
+    assert_eq!((r["added"].as_u64(), r["rejected"].as_u64()), (Some(1), Some(3)), "{r}");
+    let sub_id = r["subscriptionId"].as_str().unwrap().to_string();
+
+    let fails = [
+        vec![b'A'; 5 * 1024 * 1024 + 10],                                    // over the size cap
+        b"not base64 !!! %%% ".to_vec(),                                      // malformed
+        base64::engine::general_purpose::STANDARD.encode("\u{0}\u{1}binary").into_bytes(),
+        br#"{"inbounds":[{"listen":"0.0.0.0","port":1080,"protocol":"socks"}]}"#.to_vec(), // a server config
+        vec![0xff, 0xfe, 0x00, 0x41],                                         // not UTF-8
+    ];
+    for f in fails {
+        *body.lock().unwrap() = f;
+        let r = h.req("updateSubscription", json!({"id": sub_id}));
+        assert_eq!(r["error"]["code"], "SUBSCRIPTION_FAILED", "{r}");
+    }
+    // The last good server list survives failed updates.
+    assert_eq!(h.ok("listServers", json!({}))["servers"].as_array().unwrap().len(), 1);
+    // Too many entries: capped.
+    let many: String = (0..2100).map(|i| format!("vless://{TEST_UUID}@s{i}.example.com:443?security=tls#n{i}\n")).collect();
+    *body.lock().unwrap() = many.into_bytes();
+    let r = h.ok("updateSubscription", json!({"id": sub_id}));
+    assert_eq!(h.ok("listServers", json!({}))["servers"].as_array().unwrap().len(), 2000, "{r}");
 }

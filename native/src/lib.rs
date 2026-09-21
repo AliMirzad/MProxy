@@ -8,6 +8,7 @@ pub mod harden;
 pub mod install;
 pub mod log;
 pub mod model;
+pub mod netpolicy;
 pub mod nm;
 pub mod parse;
 pub mod paths;

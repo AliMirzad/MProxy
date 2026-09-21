@@ -100,6 +100,7 @@ pub struct SettingsPatch {
     pub jetbrains_http_port: Option<u16>,
     pub passthrough_when_disconnected: Option<bool>,
     pub debug_logging: Option<bool>,
+    pub allow_private_subscription_hosts: Option<bool>,
 }
 
 #[derive(Deserialize, Debug, PartialEq)]

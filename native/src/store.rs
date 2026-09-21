@@ -24,6 +24,9 @@ pub struct Settings {
     pub jetbrains_http_port: u16,
     pub passthrough_when_disconnected: bool,
     pub debug_logging: bool,
+    /// Allow subscription URLs on private networks (company-internal servers). Off by default:
+    /// see netpolicy.rs.
+    pub allow_private_subscription_hosts: bool,
 }
 
 impl Default for Settings {
@@ -34,6 +37,7 @@ impl Default for Settings {
             jetbrains_http_port: 10809,
             passthrough_when_disconnected: true,
             debug_logging: false,
+            allow_private_subscription_hosts: false,
         }
     }
 }

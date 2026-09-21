@@ -349,14 +349,19 @@ impl Service {
     fn spawn_subscription(&self, req_id: u32, job: SubJob) {
         let tx = self.tx.clone();
         let via = self.tunnel_port();
+        let policy = self.subscription_policy();
         std::thread::spawn(move || {
-            let result = crate::subscription::fetch(&job.url, via);
+            let result = crate::subscription::fetch(&job.url, via, &policy);
             let _ = tx.send(Msg::SubscriptionDone { req_id, job, result });
         });
     }
 
+    fn subscription_policy(&self) -> crate::subscription::Policy {
+        crate::subscription::Policy { allow_private: self.settings().allow_private_subscription_hosts }
+    }
+
     fn add_subscription(&mut self, a: AddSubscriptionArgs, req_id: u32) -> Option<ApiResult> {
-        let u = match crate::subscription::validate_url(&a.url) {
+        let u = match crate::subscription::validate_url(&a.url, &self.subscription_policy()) {
             Ok(u) => u,
             Err(m) => return Some(Err(ApiError::new(ErrorCode::InvalidConfig, m))),
         };
@@ -546,6 +551,7 @@ impl Service {
                 if let Some(v) = p.jetbrains_http_port { s.jetbrains_http_port = v; }
                 if let Some(v) = p.passthrough_when_disconnected { s.passthrough_when_disconnected = v; }
                 if let Some(v) = p.debug_logging { s.debug_logging = v; }
+                if let Some(v) = p.allow_private_subscription_hosts { s.allow_private_subscription_hosts = v; }
                 if s.jetbrains_socks_port == s.jetbrains_http_port {
                     return Err(StoreError::Invalid("SOCKS and HTTP ports must differ".into()));
                 }
@@ -701,6 +707,9 @@ impl Service {
             StoreError::NotFound => ApiError::new(ErrorCode::NotFound, "Server not found"),
             e => store_err(e),
         })?;
+        // Re-check the destination policy at connect time too (defence in depth for servers
+        // stored by an older version or edited on disk).
+        crate::netpolicy::check_server_address(&meta.address).map_err(|m| ApiError::new(ErrorCode::InvalidConfig, m))?;
         let _ = self.store.update_state(|st| {
             st.selected_server_id = Some(a.server_id.clone());
             Ok(())

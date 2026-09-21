@@ -209,6 +209,12 @@ fn json_full_config_and_outbound() {
           {{"tag": "block", "protocol": "blackhole"}}
         ]}}"#
     );
+    // sockopt.dialerProxy would chain the connection through another outbound: rejected.
+    let b = parse_xray_json(&cfg).unwrap();
+    assert!(b.servers.is_empty());
+    assert!(b.errors[0].message.contains("streamSettings.sockopt is not allowed"), "{:?}", b.errors);
+
+    let cfg = cfg.replace(r#""sockopt": {"dialerProxy": "x"}"#, r#""sockopt": {}"#);
     let b = parse_xray_json(&cfg).unwrap();
     assert_eq!(b.servers.len(), 1);
     assert!(b.errors.is_empty());
@@ -216,7 +222,8 @@ fn json_full_config_and_outbound() {
     assert_eq!(p.meta.name, "NL");
     assert_eq!(p.meta.source, Source::Json);
     assert_eq!(p.secrets.reality_password.as_deref(), Some(PBK));
-    assert!(p.warnings.iter().any(|w| w.contains("sockopt")));
+    assert!(p.warnings.iter().any(|w| w.contains("outbound.mux")), "{:?}", p.warnings);
+    assert!(p.warnings.iter().any(|w| w.contains("other sections")), "{:?}", p.warnings);
 
     // Single outbound, flattened settings, vmess.
     let ob = format!(r#"{{"protocol":"vmess","tag":"Office","settings":{{"address":"o.example.com","port":"443","id":"{UUID}","security":"aes-128-gcm"}},"streamSettings":{{"network":"ws","security":"tls","wsSettings":{{"path":"/o","headers":{{"Host":"o.example.com"}}}},"tlsSettings":{{"serverName":"o.example.com","allowInsecure":true}}}}}}"#);

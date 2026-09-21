@@ -57,6 +57,12 @@ fn pause() {
 }
 
 fn run_host(origin: &str) -> ExitCode {
+    let data_dir = paths::data_dir();
+    if ppcore::harden::is_link(&data_dir) {
+        // Checked before anything (including the log directory) is created inside it.
+        eprintln!("data directory {} is a link or junction; refusing to use it", data_dir.display());
+        return ExitCode::from(4);
+    }
     log::init(&paths::log_dir(), false);
     let id = origin.trim_start_matches("chrome-extension://").trim_end_matches('/');
     let allowed = ppcore::allowed_extension_ids();
@@ -68,7 +74,6 @@ fn run_host(origin: &str) -> ExitCode {
     xray::install_signal_handlers();
     log::info(format!("helper {} started", ppcore::NATIVE_VERSION));
 
-    let data_dir = paths::data_dir();
     let store = match store::Store::open(data_dir.clone(), secrets::default_provider(&data_dir)) {
         Ok(s) => s,
         Err(e) => {

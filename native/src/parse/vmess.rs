@@ -31,10 +31,11 @@ pub fn parse_vmess_uri(link: &str) -> Result<ParsedServer, String> {
     let json: Value = serde_json::from_str(text.trim()).map_err(|_| "VMess link payload is not valid JSON".to_string())?;
     let o = json.as_object().ok_or("VMess link payload must be a JSON object")?;
 
+    let mut warnings = Vec::new();
+    super::fields::check(o, "vmess", super::fields::VMESS_KEYS, &mut warnings)?;
     let address = v::address(&s(o, "add").ok_or("VMess link is missing the address (add)")?)?;
     let port = v::port_from_json(o.get("port").ok_or("VMess link is missing the port")?)?;
     let user = v::user_id(&s(o, "id").ok_or("VMess link is missing the user ID (id)")?)?;
-    let mut warnings = Vec::new();
     if let Some(aid) = s(o, "aid") {
         if aid.trim() != "0" && !aid.trim().is_empty() {
             warnings.push("alterId > 0 (legacy VMess MD5 auth) is not supported by Xray; using VMess AEAD".into());
@@ -65,7 +66,7 @@ pub fn parse_vmess_uri(link: &str) -> Result<ParsedServer, String> {
             Some(Value::String(x)) => Some(x.clone()),
             _ => None,
         },
-        allow_insecure: matches!(s(o, "allowInsecure").as_deref(), Some("1") | Some("true")),
+        allow_insecure: [s(o, "allowInsecure"), s(o, "insecure")].iter().any(|v| matches!(v.as_deref(), Some("1") | Some("true"))),
     };
     let st = stream::build(&params, &mut warnings)?;
     let fallback = format!("{address}:{port}");
