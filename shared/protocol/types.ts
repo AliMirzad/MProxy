@@ -1,7 +1,7 @@
 // Extension <-> native helper protocol, version 1.
 // Mirrors native/src/protocol.rs and native/src/service.rs. See PROTOCOL.md.
 
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 export const HOST_NAME = 'com.privateproxy.host';
 
 export type ErrorCode =
@@ -41,7 +41,9 @@ export interface NativeStatus {
   state: ConnState;
   phase?: 'starting' | 'verifying' | 'restarting';
   serverId?: string;
-  proxy?: { scheme: 'socks5'; host: string; port: number };
+  /** Browser proxy while connected. `username`/`password` are per-connection credentials that only the
+   *  service worker uses (to answer the proxy's 407 challenge); they are stripped before any UI sees the status. */
+  proxy?: { scheme: 'http'; host: string; port: number; username?: string; password?: string };
   error?: ApiError;
   since?: number;
   jetbrains: JetbrainsStatus;

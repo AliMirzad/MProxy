@@ -4,7 +4,8 @@
   "version": "1.0.0",
   "description": "MProxy: private VLESS/VMess (Xray) proxy for this browser, with a local endpoint for JetBrains IDEs. Created by Ali Mirzad.",
   "minimum_chrome_version": "110",
-  "permissions": ["proxy", "storage", "nativeMessaging", "activeTab", "privacy"],
+  "permissions": ["proxy", "storage", "nativeMessaging", "activeTab", "privacy", "webRequest", "webRequestAuthProvider"],
+  "host_permissions": ["<all_urls>"],
   "background": {
     "service_worker": "background.js",
     "type": "module"

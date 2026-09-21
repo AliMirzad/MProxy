@@ -27,7 +27,7 @@ class FakePort implements PortLike {
   }
 }
 
-const hello = { nativeVersion: '1.0.0', protocolVersion: 2, xrayVersion: '26.3.27', xrayAvailable: true, platform: 'windows-x86_64', keyStorage: 'x' };
+const hello = { nativeVersion: '1.0.0', protocolVersion: 3, xrayVersion: '26.3.27', xrayAvailable: true, platform: 'windows-x86_64', keyStorage: 'x' };
 const jb = { enabled: true, mode: 'direct' as const, socksPort: 10808, httpPort: 10809, issue: null, authRequired: true };
 const status = (s: Partial<NativeStatus>): NativeStatus => ({ state: 'disconnected', jetbrains: jb, xrayAvailable: true, ...s });
 
@@ -90,7 +90,7 @@ describe('Controller', () => {
     await env.c.start();
     await tick();
     expect(env.log[0]).toBe('clear');
-    expect(env.ports[0].sent[0]).toMatchObject({ cmd: 'hello', args: { protocolVersion: 2 } });
+    expect(env.ports[0].sent[0]).toMatchObject({ cmd: 'hello', args: { protocolVersion: 3 } });
     expect(env.c.state.runtime.kind).toBe('ready');
   });
 
@@ -101,7 +101,7 @@ describe('Controller', () => {
     env.ports[0].deliver({ event: 'status', status: status({ state: 'connecting', phase: 'starting', serverId: 'a' }) });
     await env.c.idle();
     expect(env.log).toEqual([]); // still direct while connecting
-    env.ports[0].deliver({ event: 'status', status: status({ state: 'connected', serverId: 'a', proxy: { scheme: 'socks5', host: '127.0.0.1', port: 5555 } }) });
+    env.ports[0].deliver({ event: 'status', status: status({ state: 'connected', serverId: 'a', proxy: { scheme: 'http', host: '127.0.0.1', port: 5555, username: 'bUser', password: 'bPass' } }) });
     await env.c.idle();
     expect(env.log).toEqual(['set:5555', 'webrtc:true']);
     expect(env.c.state.browserProxied).toBe(true);
@@ -115,7 +115,7 @@ describe('Controller', () => {
     await env.c.start();
     await tick();
     const p = env.ports[0];
-    p.deliver({ event: 'status', status: status({ state: 'connected', serverId: 'a', proxy: { scheme: 'socks5', host: '127.0.0.1', port: 5555 } }) });
+    p.deliver({ event: 'status', status: status({ state: 'connected', serverId: 'a', proxy: { scheme: 'http', host: '127.0.0.1', port: 5555, username: 'bUser', password: 'bPass' } }) });
     await env.c.idle();
     env.log.length = 0;
     p.deliver({ event: 'status', status: status({ state: 'connecting', phase: 'restarting', serverId: 'a' }) });
@@ -130,7 +130,7 @@ describe('Controller', () => {
     await env.c.start();
     await tick();
     const p = env.ports[0];
-    p.deliver({ event: 'status', status: status({ state: 'connected', serverId: 'a', proxy: { scheme: 'socks5', host: '127.0.0.1', port: 5555 } }) });
+    p.deliver({ event: 'status', status: status({ state: 'connected', serverId: 'a', proxy: { scheme: 'http', host: '127.0.0.1', port: 5555, username: 'bUser', password: 'bPass' } }) });
     await env.c.idle();
     env.log.length = 0;
     env.setLastError('Native host has exited.');
@@ -157,7 +157,7 @@ describe('Controller', () => {
     await e.c.start();
     await tick();
     const p = e.ports[0];
-    p.deliver({ event: 'status', status: status({ state: 'connected', serverId: 'a', proxy: { scheme: 'socks5', host: '127.0.0.1', port: 5555 } }) });
+    p.deliver({ event: 'status', status: status({ state: 'connected', serverId: 'a', proxy: { scheme: 'http', host: '127.0.0.1', port: 5555, username: 'bUser', password: 'bPass' } }) });
     await e.c.idle();
     expect(e.c.state.proxyError).toMatch(/Another extension/);
     expect(e.c.state.browserProxied).toBe(false);
@@ -168,7 +168,7 @@ describe('Controller', () => {
     await env.c.start();
     await tick();
     const p = env.ports[0];
-    p.deliver({ event: 'status', status: status({ state: 'connected', serverId: 'a', proxy: { scheme: 'socks5', host: '127.0.0.1', port: 5555 } }) });
+    p.deliver({ event: 'status', status: status({ state: 'connected', serverId: 'a', proxy: { scheme: 'http', host: '127.0.0.1', port: 5555, username: 'bUser', password: 'bPass' } }) });
     await env.c.idle();
     // Our own change (set) fires onChange too: nothing happens while we are in control.
     env.c.proxyControlChanged();
@@ -184,6 +184,35 @@ describe('Controller', () => {
     expect(env.c.state.proxyError).toMatch(/Another extension.*disconnected/);
     expect(env.log).toEqual(['clear', 'webrtc:false']);
     expect(p.sent.some((m) => m.cmd === 'disconnect')).toBe(true);
+  });
+
+  it('keeps the browser proxy credentials out of the UI and answers only its own tunnel', async () => {
+    await env.c.start();
+    await tick();
+    const p = env.ports[0];
+    p.deliver({ event: 'status', status: status({ state: 'connected', serverId: 'a', proxy: { scheme: 'http', host: '127.0.0.1', port: 5555, username: 'bUser', password: 'bPass' } }) });
+    await env.c.idle();
+    // Never in the state broadcast to the popup.
+    expect(JSON.stringify(env.states.at(-1))).not.toContain('bPass');
+    expect(env.c.state.status?.proxy).toEqual({ scheme: 'http', host: '127.0.0.1', port: 5555 });
+    // Only 127.0.0.1 and exactly the tunnel port.
+    expect(env.c.proxyCredentials({ host: '127.0.0.1', port: 5555 })).toEqual({ username: 'bUser', password: 'bPass' });
+    expect(env.c.proxyCredentials({ host: '127.0.0.1', port: 5556 })).toBeNull();
+    expect(env.c.proxyCredentials({ host: 'proxy.evil.example', port: 5555 })).toBeNull();
+    expect(env.c.proxyCredentials({ host: 'localhost', port: 5555 })).toBeNull();
+    // Gone after disconnect.
+    p.deliver({ event: 'status', status: status({ state: 'disconnected' }) });
+    await env.c.idle();
+    expect(env.c.proxyCredentials({ host: '127.0.0.1', port: 5555 })).toBeNull();
+  });
+
+  it('does not answer challenges while another extension controls the proxy', async () => {
+    const e = setup({ proxyError: 'Another extension controls the browser proxy.' });
+    await e.c.start();
+    await tick();
+    e.ports[0].deliver({ event: 'status', status: status({ state: 'connected', serverId: 'a', proxy: { scheme: 'http', host: '127.0.0.1', port: 5555, username: 'bUser', password: 'bPass' } }) });
+    await e.c.idle();
+    expect(e.c.proxyCredentials({ host: '127.0.0.1', port: 5555 })).toBeNull();
   });
 
   it('enforces the command allow-list', async () => {

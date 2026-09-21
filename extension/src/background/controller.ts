@@ -72,6 +72,8 @@ export class Controller {
   private retryTimer: unknown = null;
   private proxyChain: Promise<void> = Promise.resolve();
   private generation = 0;
+  /** Credentials of the browser proxy for the current connection (memory only, never broadcast). */
+  private proxyAuth: { port: number; username: string; password: string } | null = null;
 
   constructor(private deps: Deps) {
     this.state = { runtime: { kind: 'starting' }, status: null, proxyError: null, browserProxied: false, extensionVersion: deps.extensionVersion };
@@ -156,6 +158,7 @@ export class Controller {
 
   private onDisconnect(gen: number, err: string | undefined) {
     if (gen !== this.generation) return;
+    this.proxyAuth = null;
     this.generation++; // late responses from the dead port must not change state
     this.port = null;
     this.failPending({ code: 'INTERNAL', message: 'Native runtime is not available' });
@@ -243,7 +246,13 @@ export class Controller {
 
   /** Mirrors helper state into browser proxy settings. */
   onStatus(status: NativeStatus): void {
-    this.state.status = status;
+    if (status.state === 'connected' && status.proxy?.username && status.proxy.password) {
+      this.proxyAuth = { port: status.proxy.port, username: status.proxy.username, password: status.proxy.password };
+    } else if (!(status.state === 'connecting' && status.phase === 'restarting')) {
+      this.proxyAuth = null;
+    }
+    // The UI gets the status without the credentials.
+    this.state.status = status.proxy ? { ...status, proxy: { scheme: status.proxy.scheme, host: status.proxy.host, port: status.proxy.port } } : status;
     this.emit();
     const connected = status.state === 'connected' && status.proxy;
     const keepDuringRestart = status.state === 'connecting' && status.phase === 'restarting' && this.state.browserProxied;
@@ -290,6 +299,18 @@ export class Controller {
       this.emit();
       void this.send("disconnect", {});
     });
+  }
+
+  /**
+   * Credentials for a proxy authentication challenge, or null. Only our own tunnel inbound
+   * (127.0.0.1 and exactly the current port) is ever answered, and only while our proxy setting is
+   * in effect, so the credentials cannot be sent to any other proxy.
+   */
+  proxyCredentials(challenger: { host: string; port: number }): { username: string; password: string } | null {
+    const a = this.proxyAuth;
+    if (!a || !this.state.browserProxied) return null;
+    if (challenger.host !== '127.0.0.1' || challenger.port !== a.port) return null;
+    return { username: a.username, password: a.password };
   }
 
   /** For tests. */

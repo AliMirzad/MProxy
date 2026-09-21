@@ -41,9 +41,11 @@ pub struct IdeAuth {
 
 #[derive(Debug, Clone)]
 pub struct RuntimePlan {
-    /// Browser-facing SOCKS inbound; `None` in passthrough mode. Always without authentication:
-    /// Chromium cannot send SOCKS credentials.
+    /// Browser-facing HTTP proxy inbound; `None` in passthrough mode. It requires
+    /// `browser_auth` (per-connection random credentials that the extension answers proxy
+    /// challenges with), so other local processes and users cannot use the tunnel.
     pub browser_port: Option<u16>,
+    pub browser_auth: Option<IdeAuth>,
     pub jetbrains: JetbrainsPorts,
     /// `Some`: the IDE HTTP and SOCKS inbounds require these credentials.
     pub ide_auth: Option<IdeAuth>,
@@ -69,7 +71,7 @@ fn http_inbound(tag: &str, port: u16, auth: Option<&IdeAuth>) -> Value {
 fn inbounds(plan: &RuntimePlan) -> Vec<Value> {
     let mut v = Vec::new();
     if let Some(p) = plan.browser_port {
-        v.push(socks_inbound("browser-socks", p, None));
+        v.push(http_inbound("browser-http", p, plan.browser_auth.as_ref()));
     }
     if let Some(p) = plan.jetbrains.socks {
         v.push(socks_inbound("ide-socks", p, plan.ide_auth.as_ref()));
@@ -255,6 +257,7 @@ mod tests {
             browser_port: Some(50000),
             jetbrains: JetbrainsPorts { socks: Some(10808), http: Some(10809) },
             ide_auth: None,
+            browser_auth: Some(IdeAuth { user: "b".into(), pass: "p".into() }),
             log_level: "warning",
         }
     }

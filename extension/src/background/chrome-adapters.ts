@@ -20,7 +20,9 @@ export function proxyConfig(port: number): chrome.proxy.ProxyConfig {
   return {
     mode: 'fixed_servers',
     rules: {
-      singleProxy: { scheme: 'socks5', host: '127.0.0.1', port },
+      // HTTP proxy with per-connection credentials (answered in onAuthRequired). Hostnames are sent
+      // to the proxy unresolved (CONNECT host:port / absolute URI), so DNS stays on the server.
+      singleProxy: { scheme: 'http', host: '127.0.0.1', port },
       bypassList: BYPASS_LIST,
     },
   };

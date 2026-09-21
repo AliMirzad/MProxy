@@ -4,7 +4,7 @@ import { BYPASS_LIST, controlProblem, proxyConfig } from '../src/background/chro
 import type { AppState } from '../src/shared/app-state';
 import type { NativeStatus, ServerSummary } from '../../shared/protocol/types';
 
-const hello = { nativeVersion: '1.0.0', protocolVersion: 2, xrayVersion: '26.3.27', xrayAvailable: true, platform: 'x', keyStorage: 'x' };
+const hello = { nativeVersion: '1.0.0', protocolVersion: 3, xrayVersion: '26.3.27', xrayAvailable: true, platform: 'x', keyStorage: 'x' };
 const jb = { enabled: true, mode: 'direct' as const, socksPort: 10808, httpPort: 10809, issue: null, authRequired: true };
 const app = (status: Partial<NativeStatus> | null, extra: Partial<AppState> = {}): AppState => ({
   runtime: { kind: 'ready', hello },
@@ -50,7 +50,7 @@ describe('helpers', () => {
   it('proxy config is loopback SOCKS5 with private bypass', () => {
     const c = proxyConfig(4321);
     expect(c.mode).toBe('fixed_servers');
-    expect(c.rules?.singleProxy).toEqual({ scheme: 'socks5', host: '127.0.0.1', port: 4321 });
+    expect(c.rules?.singleProxy).toEqual({ scheme: 'http', host: '127.0.0.1', port: 4321 });
     expect(BYPASS_LIST).toContain('<local>');
     expect(BYPASS_LIST).toContain('192.168.0.0/16');
   });

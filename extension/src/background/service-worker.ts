@@ -73,6 +73,31 @@ chrome.runtime.onMessage.addListener((raw: unknown, sender, sendResponse) => {
   }
 });
 
+// Answer the tunnel inbound's 407 challenge with the per-connection credentials. Nothing else is
+// answered (other proxies, and every website's own authentication, get the browser default), and a
+// request challenged twice is cancelled so wrong credentials can never loop.
+const answered = new Set<string>();
+chrome.webRequest.onAuthRequired.addListener(
+  (details, callback) => {
+    let response: chrome.webRequest.BlockingResponse = {};
+    const creds = details.isProxy && details.challenger ? controller.proxyCredentials(details.challenger) : null;
+    if (creds) {
+      if (answered.has(details.requestId)) {
+        answered.delete(details.requestId);
+        response = { cancel: true };
+      } else {
+        answered.add(details.requestId);
+        if (answered.size > 1000) answered.clear();
+        response = { authCredentials: creds };
+      }
+    }
+    callback?.(response);
+    return undefined;
+  },
+  { urls: ['<all_urls>'] },
+  ['asyncBlocking'],
+);
+
 // Another extension or a policy can take over the browser proxy at any time; never keep showing
 // "connected" when our setting is no longer in effect.
 chrome.proxy.settings.onChange.addListener(() => controller.proxyControlChanged());

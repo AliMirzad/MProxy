@@ -74,7 +74,8 @@ pub struct JetbrainsStatus {
 enum Mode {
     Off,
     Passthrough,
-    Tunnel { server_id: String, port: u16, config: Vec<u8> },
+    /// `auth`: per-connection credentials of the browser inbound (memory only, never stored).
+    Tunnel { server_id: String, port: u16, config: Vec<u8>, auth: xrayconf::IdeAuth },
 }
 
 pub struct Timing {
@@ -220,8 +221,9 @@ impl Service {
             ConnState::Error { server_id, .. } => server_id.clone(),
             _ => None,
         };
-        if let ConnState::Connected { port, .. } = &self.state {
-            v["proxy"] = json!({ "scheme": "socks5", "host": xrayconf::LOOPBACK, "port": port });
+        if let (ConnState::Connected { port, .. }, Mode::Tunnel { auth, .. }) = (&self.state, &self.mode) {
+            // The extension answers the proxy's 407 challenge with these; it never shows or stores them.
+            v["proxy"] = json!({ "scheme": "http", "host": xrayconf::LOOPBACK, "port": port, "username": auth.user, "password": auth.pass });
         }
         if let ConnState::Error { code, message, .. } = &self.state {
             v["error"] = json!({ "code": code, "message": message });
@@ -711,7 +713,7 @@ impl Service {
             }
         };
         self.jetbrains.auth_required = ide_auth.is_some();
-        let plan = RuntimePlan { browser_port: None, jetbrains: jb, ide_auth, log_level: Self::log_level() };
+        let plan = RuntimePlan { browser_port: None, browser_auth: None, jetbrains: jb, ide_auth, log_level: Self::log_level() };
         let cfg = serde_json::to_vec(&xrayconf::passthrough_config(&plan)).unwrap_or_default();
         match xray::spawn(&xray_path, &cfg, self.store.dir()) {
             Ok(r) => {
@@ -797,13 +799,15 @@ impl Service {
             }
         };
         self.jetbrains.auth_required = ide_auth.is_some();
+        // Fresh random credentials for every connection (~140 bits in the password).
+        let browser_auth = xrayconf::IdeAuth { user: format!("b{}", store::random_token(10)), pass: store::random_token(24) };
         let mut last_err = String::new();
         for try_no in 0..2 {
             let port = match ports::ephemeral_port() {
                 Ok(p) => p,
                 Err(e) => return self.fail(ErrorCode::PortUnavailable, format!("No free local port: {e}"), Some(sid)),
             };
-            let plan = RuntimePlan { browser_port: Some(port), jetbrains: jb, ide_auth: ide_auth.clone(), log_level: Self::log_level() };
+            let plan = RuntimePlan { browser_port: Some(port), browser_auth: Some(browser_auth.clone()), jetbrains: jb, ide_auth: ide_auth.clone(), log_level: Self::log_level() };
             let cfg = serde_json::to_vec(&xrayconf::tunnel_config(meta, secrets, &plan)).unwrap_or_default();
             if try_no == 0 {
                 if let Err(reason) = xray::test_config(&xray_path, &cfg) {
@@ -820,9 +824,9 @@ impl Service {
                         self.jetbrains.http_port = jb.http;
                         self.jetbrains.mode = "tunnel";
                         self.run = Some(r);
-                        self.mode = Mode::Tunnel { server_id: sid.clone(), port, config: cfg };
+                        self.mode = Mode::Tunnel { server_id: sid.clone(), port, config: cfg, auth: browser_auth.clone() };
                         self.set_state(ConnState::Connecting { server_id: sid, phase: "verifying" });
-                        self.spawn_probe(port);
+                        self.spawn_probe(port, browser_auth.clone());
                         return;
                     }
                     let tail = r.tail.lock().map(|t| t.lines()).unwrap_or_default();
@@ -851,12 +855,12 @@ impl Service {
         self.fail(ErrorCode::XrayFailed, msg, Some(sid));
     }
 
-    fn spawn_probe(&self, port: u16) {
+    fn spawn_probe(&self, port: u16, auth: xrayconf::IdeAuth) {
         let tx = self.tx.clone();
         let attempt = self.attempt;
         let per = self.timing.probe_timeout;
         std::thread::spawn(move || {
-            let result = probe::probe(port, &probe::default_targets(), per, &|| false).map_err(|e| e.to_string());
+            let result = probe::probe(port, &auth, &probe::default_targets(), per, &|| false).map_err(|e| e.to_string());
             let _ = tx.send(Msg::ProbeDone { attempt, result });
         });
     }
@@ -910,7 +914,7 @@ impl Service {
         log::warn(format!("Xray exited unexpectedly ({how})"));
         let last = self.last_xray_error.iter().rev().find(|l| !l.trim().is_empty()).cloned().unwrap_or_default();
         match std::mem::replace(&mut self.mode, Mode::Off) {
-            Mode::Tunnel { server_id, port, config } => {
+            Mode::Tunnel { server_id, port, config, auth } => {
                 let now = Instant::now();
                 self.restarts.retain(|t| now.duration_since(*t) < self.timing.restart_window);
                 let connected = matches!(self.state, ConnState::Connected { .. });
@@ -921,7 +925,7 @@ impl Service {
                         if let Ok(nr) = xray::spawn(&xp, &config, self.store.dir()) {
                             if ports::wait_listening(port, self.timing.listen_timeout, || nr.try_exit().is_none()) {
                                 self.run = Some(nr);
-                                self.mode = Mode::Tunnel { server_id: server_id.clone(), port, config };
+                                self.mode = Mode::Tunnel { server_id: server_id.clone(), port, config, auth };
                                 self.jetbrains.mode = "tunnel";
                                 log::info("Xray restarted after unexpected exit");
                                 self.set_state(ConnState::Connected { server_id, port, since: store::now() });

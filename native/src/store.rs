@@ -82,10 +82,15 @@ pub struct SecretsFile {
 pub const IDE_USER: &str = "privateproxy";
 
 fn new_password() -> String {
+    random_token(24)
+}
+
+/// Random token from the OS CSPRNG (57-symbol alphabet: ~5.8 bits per character).
+pub fn random_token(len: usize) -> String {
     use rand::Rng;
     const ALPHABET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
     let mut rng = rand::rngs::OsRng;
-    (0..24).map(|_| ALPHABET[rng.gen_range(0..ALPHABET.len())] as char).collect()
+    (0..len).map(|_| ALPHABET[rng.gen_range(0..ALPHABET.len())] as char).collect()
 }
 
 #[derive(Debug, thiserror::Error)]

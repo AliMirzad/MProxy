@@ -352,6 +352,26 @@ impl Drop for Host {
 // ---------------------------------------------------------------- client-side traffic helpers
 
 /// HTTP GET through a SOCKS5 proxy, sending the hostname unresolved (like Chromium).
+/// The browser path: the authenticated HTTP proxy inbound with the per-connection credentials
+/// from the status (hostname sent unresolved, so DNS happens on the server).
+fn via_browser(st: &Value, host: &str, target_port: u16) -> Result<String, String> {
+    let port = st["proxy"]["port"].as_u64().ok_or("no proxy in status")? as u16;
+    assert_eq!(st["proxy"]["scheme"], "http", "{st}");
+    let (u, p) = (st["proxy"]["username"].as_str().unwrap(), st["proxy"]["password"].as_str().unwrap());
+    http_proxy_with_auth(port, host, target_port, Some((u, p)))
+}
+
+/// Whether `port` accepts a SOCKS5 no-auth greeting (answers 05 00) within 2 s.
+fn socks_greeting_accepted(port: u16) -> bool {
+    let Ok(mut s) = TcpStream::connect(("127.0.0.1", port)) else { return false };
+    s.set_read_timeout(Some(Duration::from_secs(2))).ok();
+    if s.write_all(&[5, 1, 0]).is_err() {
+        return false;
+    }
+    let mut r = [0u8; 2];
+    s.read_exact(&mut r).is_ok() && r == [5, 0]
+}
+
 fn get_via_socks(port: u16, host: &str, target_port: u16) -> Result<String, String> {
     let mut s = TcpStream::connect(("127.0.0.1", port)).map_err(|e| e.to_string())?;
     s.set_read_timeout(Some(Duration::from_secs(10))).ok();
@@ -454,8 +474,8 @@ fn all_transports_end_to_end() {
     let e = env().unwrap();
     let o = opts(&e);
     let mut h = Host::start(&o);
-    let hello = h.ok("hello", json!({"protocolVersion": 2, "extensionVersion": "test"}));
-    assert_eq!(hello["protocolVersion"], 2);
+    let hello = h.ok("hello", json!({"protocolVersion": 3, "extensionVersion": "test"}));
+    assert_eq!(hello["protocolVersion"], 3);
     assert_eq!(hello["xrayAvailable"], true);
     assert!(hello["xrayVersion"].as_str().unwrap().starts_with("26."));
 
@@ -475,8 +495,11 @@ fn all_transports_end_to_end() {
         assert_eq!(st["state"], "connected", "{label}: {st}");
         let port = st["proxy"]["port"].as_u64().unwrap() as u16;
         let before = *e.target.hits.lock().unwrap();
-        // Browser path (SOCKS5, remote DNS: probe.test only resolves on the server).
-        let r = get_via_socks(port, "probe.test", e.target.port);
+        // Browser path (authenticated HTTP proxy, remote DNS: probe.test only resolves on the server).
+        let r = via_browser(&st, "probe.test", e.target.port);
+        // Without the per-connection credentials the browser port is useless to other processes.
+        assert!(http_proxy_with_auth(port, "probe.test", e.target.port, None).unwrap_or_default().contains("407"), "{label}: browser port open without credentials");
+        assert!(!socks_greeting_accepted(port), "{label}: browser port usable as unauthenticated SOCKS");
         if r.is_err() {
             eprintln!("status={st}
 log:
@@ -523,7 +546,7 @@ fn failures_and_idempotency() {
     let e = env().unwrap();
     let o = opts(&e);
     let mut h = Host::start(&o);
-    h.ok("hello", json!({"protocolVersion": 2, "extensionVersion": "test"}));
+    h.ok("hello", json!({"protocolVersion": 3, "extensionVersion": "test"}));
 
     // Incompatible protocol version.
     let r = h.req("hello", json!({"protocolVersion": 99, "extensionVersion": "x"}));
@@ -607,7 +630,7 @@ fn failures_and_idempotency() {
     };
     let st = h.ok("getStatus", json!({}));
     assert_ne!(pid, pid2);
-    assert_eq!(get_via_socks(port, "probe.test", e.target.port).unwrap(), "HTTP/1.1 204 No Content");
+    assert_eq!(via_browser(&st, "probe.test", e.target.port).unwrap(), "HTTP/1.1 204 No Content", "credentials survive the restart");
     let _ = st;
 
     // Repeated crashes -> XRAY_FAILED; status says error so the extension clears the browser proxy.
@@ -640,7 +663,7 @@ fn failures_and_idempotency() {
 fn xray_missing_is_reported() {
     let o = HostOpts { xray: None, probe_port: 1, jb_socks: free_port(), jb_http: free_port(), allow_loopback: true, extra_env: vec![] };
     let mut h = Host::start(&o);
-    let hello = h.ok("hello", json!({"protocolVersion": 2, "extensionVersion": "test"}));
+    let hello = h.ok("hello", json!({"protocolVersion": 3, "extensionVersion": "test"}));
     assert_eq!(hello["xrayAvailable"], false);
     let imp = h.ok("importText", json!({"text": format!("vless://{TEST_UUID}@example.com:443?security=tls#x"), "source": "paste"}));
     let id = imp["serverIds"][0].as_str().unwrap().to_string();
@@ -779,7 +802,7 @@ fn xray_isolation_and_listeners() {
     let e = env().unwrap();
     let o = opts(&e);
     let mut h = Host::start(&o);
-    h.ok("hello", json!({"protocolVersion": 2, "extensionVersion": "test"}));
+    h.ok("hello", json!({"protocolVersion": 3, "extensionVersion": "test"}));
     let (_, link) = links(&e).pop().unwrap(); // REALITY + Vision
     let imp = h.ok("importText", json!({"text": link, "source": "paste"}));
     let id = imp["serverIds"][0].as_str().unwrap().to_string();
@@ -852,7 +875,7 @@ fn xray_isolation_and_listeners() {
 fn hostile_native_messages() {
     let o = HostOpts { xray: xray_path(), probe_port: 1, jb_socks: free_port(), jb_http: free_port(), allow_loopback: true, extra_env: vec![] };
     let mut h = Host::start(&o);
-    h.ok("hello", json!({"protocolVersion": 2, "extensionVersion": "test"}));
+    h.ok("hello", json!({"protocolVersion": 3, "extensionVersion": "test"}));
     // No generic OS operations exist.
     for cmd in ["exec", "executeCommand", "runProcess", "openFile", "writeFile", "downloadAndExecute", "installPackage", "runScript", "shell", "powershell", "cmd", "bash", "setXrayArgs", "setEnv"] {
         let r = h.req(cmd, json!({"command": "calc.exe", "path": "C:\\Windows\\System32\\calc.exe", "args": ["-c", "id"]}));
@@ -983,7 +1006,7 @@ fn tampered_xray_is_never_executed() {
     for bin in [patched, other] {
         let o = HostOpts { xray: Some(bin.clone()), probe_port: 1, jb_socks: free_port(), jb_http: free_port(), allow_loopback: true, extra_env: vec![] };
         let mut h = Host::start(&o);
-        let hello = h.ok("hello", json!({"protocolVersion": 2, "extensionVersion": "test"}));
+        let hello = h.ok("hello", json!({"protocolVersion": 3, "extensionVersion": "test"}));
         assert_eq!(hello["xrayAvailable"], false, "{}", bin.display());
         let st = h.ok("getStatus", json!({}));
         assert_eq!(st["jetbrains"]["mode"], "off", "passthrough must not start: {st}");
@@ -1207,7 +1230,7 @@ fn ide_endpoint_requires_password() {
     let e = env().unwrap();
     let o = opts(&e);
     let mut h = Host::start(&o);
-    h.ok("hello", json!({"protocolVersion": 2, "extensionVersion": "test"}));
+    h.ok("hello", json!({"protocolVersion": 3, "extensionVersion": "test"}));
     // The harness starts with ideAuth off; switch to the product default (on).
     h.ok("setSettings", json!({"ideAuth": true}));
     let c = h.ok("getIdeCredentials", json!({}));
@@ -1242,7 +1265,11 @@ fn ide_endpoint_requires_password() {
     assert_eq!(st["state"], "connected", "{st}");
     check_mode("tunnel");
     let bp = st["proxy"]["port"].as_u64().unwrap() as u16;
-    assert_eq!(get_via_socks(bp, "probe.test", e.target.port).unwrap(), "HTTP/1.1 204 No Content");
+    assert_eq!(via_browser(&st, "probe.test", e.target.port).unwrap(), "HTTP/1.1 204 No Content");
+    // The IDE password does not open the browser port and vice versa.
+    assert!(http_proxy_with_auth(bp, "probe.test", e.target.port, Some((&user, &pass))).unwrap_or_default().contains("407"));
+    let (bu, bpw) = (st["proxy"]["username"].as_str().unwrap().to_string(), st["proxy"]["password"].as_str().unwrap().to_string());
+    assert!(http_proxy_with_auth(o.jb_http, "127.0.0.1", target, Some((&bu, &bpw))).unwrap_or_default().contains("407"));
     // Under heavy parallel test load the first tunnelled request can get a 503 (outbound dial
     // failure, not an auth issue; see docs/adversarial-testing.md). Retry up to 3 times.
     let mut via_ide = http_proxy_with_auth(o.jb_http, "probe.test", e.target.port, Some((&user, &pass)));
@@ -1406,7 +1433,7 @@ fn mandatory_protection_failure_blocks_connection() {
     let mut o = opts(&e);
     o.extra_env = vec![("PRIVATE_PROXY_TEST_BREAK_ISOLATION", "1")];
     let mut h = Host::start(&o);
-    h.ok("hello", json!({"protocolVersion": 2, "extensionVersion": "test"}));
+    h.ok("hello", json!({"protocolVersion": 3, "extensionVersion": "test"}));
     // The IDE passthrough (also a Xray launch) must not have started either.
     assert!(!port_open(o.jb_http) && !port_open(o.jb_socks), "IDE endpoint started despite the failed check");
     let (_, link) = links(&e).remove(1);
@@ -1427,7 +1454,7 @@ fn weakened_data_folder_blocks_connection() {
     let e = env().unwrap();
     let o = opts(&e);
     let mut h = Host::start(&o);
-    h.ok("hello", json!({"protocolVersion": 2, "extensionVersion": "test"}));
+    h.ok("hello", json!({"protocolVersion": 3, "extensionVersion": "test"}));
     let (_, link) = links(&e).remove(1);
     let imp = h.ok("importText", json!({"text": link, "source": "paste"}));
     let data = PathBuf::from(h.ok("getDiagnostics", json!({}))["dataDir"].as_str().unwrap());

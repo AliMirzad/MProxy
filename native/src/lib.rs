@@ -47,7 +47,7 @@ pub fn test_flag(name: &str) -> bool {
 
 /// Version of the extension <-> helper message protocol.
 /// Bump on any incompatible change to `protocol.rs`.
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 
 /// Native messaging host name (must match the extension and the host manifest).
 pub const HOST_NAME: &str = "com.privateproxy.host";

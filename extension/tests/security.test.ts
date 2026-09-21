@@ -27,9 +27,12 @@ beforeAll(() => {
 describe('manifest attack surface', () => {
   it('requests only the permissions the product needs', () => {
     // privacy: WebRTC leak protection, on by default while connected.
-    expect([...manifest.permissions].sort()).toEqual(['activeTab', 'nativeMessaging', 'privacy', 'proxy', 'storage']);
+    // webRequest + webRequestAuthProvider + <all_urls>: answering the local tunnel's proxy
+    // challenge (Chromium delivers onAuthRequired only with host permissions). The CSP below still
+    // forbids the extension from contacting any origin.
+    expect([...manifest.permissions].sort()).toEqual(['activeTab', 'nativeMessaging', 'privacy', 'proxy', 'storage', 'webRequest', 'webRequestAuthProvider']);
     expect(manifest.optional_permissions).toBeUndefined();
-    expect(manifest.host_permissions).toBeUndefined();
+    expect(manifest.host_permissions).toEqual(['<all_urls>']);
     expect(manifest.optional_host_permissions).toBeUndefined();
   });
 
@@ -39,6 +42,10 @@ describe('manifest attack surface', () => {
     expect(manifest.web_accessible_resources).toBeUndefined();
     expect(manifest.sandbox).toBeUndefined();
     expect(manifest.update_url).toBeUndefined();
+  });
+
+  it('cannot contact any origin despite host permissions (connect-src)', () => {
+    expect(manifest.content_security_policy.extension_pages).toMatch(/connect-src 'self' data:(;|$)/);
   });
 
   it('has a strict CSP without eval, inline or remote code', () => {

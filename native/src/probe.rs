@@ -49,83 +49,55 @@ impl std::fmt::Display for ProbeError {
     }
 }
 
-/// Performs one HTTP request through SOCKS5 and returns the HTTP status line.
-pub fn probe_once(socks_port: u16, t: &Target, timeout: Duration) -> Result<String, ProbeError> {
+/// Performs one HTTP request through the local authenticated HTTP proxy inbound (exactly the
+/// path the browser uses: the hostname goes to the proxy unresolved) and returns the status line.
+pub fn probe_once(port: u16, auth: &crate::xrayconf::IdeAuth, t: &Target, timeout: Duration) -> Result<String, ProbeError> {
+    use base64::Engine;
     let deadline = Instant::now() + timeout;
     let remaining = || deadline.saturating_duration_since(Instant::now()).max(Duration::from_millis(1));
-    let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, socks_port));
+    let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
     let mut s = TcpStream::connect_timeout(&addr, Duration::from_secs(2))
         .map_err(|e| ProbeError::Local(format!("local proxy not reachable: {e}")))?;
     s.set_nodelay(true).ok();
     let io = |e: std::io::Error| ProbeError::Remote(format!("connection through the server failed: {e}"));
-
     s.set_write_timeout(Some(remaining())).ok();
     s.set_read_timeout(Some(remaining())).ok();
-    s.write_all(&[5, 1, 0]).map_err(|e| ProbeError::Local(e.to_string()))?;
-    let mut rep = [0u8; 2];
-    s.read_exact(&mut rep).map_err(|e| ProbeError::Local(format!("SOCKS greeting failed: {e}")))?;
-    if rep != [5, 0] {
-        return Err(ProbeError::Local("local SOCKS inbound rejected the greeting".into()));
-    }
-    let host = t.host.as_bytes();
-    if host.len() > 255 {
-        return Err(ProbeError::Local("probe host too long".into()));
-    }
-    let mut req = vec![5, 1, 0, 3, host.len() as u8];
-    req.extend_from_slice(host);
-    req.extend_from_slice(&t.port.to_be_bytes());
-    s.write_all(&req).map_err(io)?;
-    s.set_read_timeout(Some(remaining())).ok();
-    let mut head = [0u8; 4];
-    s.read_exact(&mut head).map_err(io)?;
-    if head[1] != 0 {
-        return Err(ProbeError::Remote(format!("proxy refused the connection (SOCKS code {})", head[1])));
-    }
-    let skip = match head[3] {
-        1 => 4 + 2,
-        4 => 16 + 2,
-        3 => {
-            let mut l = [0u8; 1];
-            s.read_exact(&mut l).map_err(io)?;
-            l[0] as usize + 2
-        }
-        _ => return Err(ProbeError::Local("malformed SOCKS reply".into())),
-    };
-    let mut junk = vec![0u8; skip];
-    s.read_exact(&mut junk).map_err(io)?;
-
-    let http = format!(
-        "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: Mozilla/5.0\r\nConnection: close\r\n\r\n",
-        t.path, t.host
+    let cred = base64::engine::general_purpose::STANDARD.encode(format!("{}:{}", auth.user, auth.pass));
+    let req = format!(
+        "GET http://{h}:{p}{path} HTTP/1.1\r\nHost: {h}:{p}\r\nProxy-Authorization: Basic {cred}\r\nUser-Agent: {ua}\r\nConnection: close\r\n\r\n",
+        h = t.host,
+        p = t.port,
+        path = t.path,
+        ua = crate::subscription::USER_AGENT
     );
-    s.set_write_timeout(Some(remaining())).ok();
-    s.write_all(http.as_bytes()).map_err(io)?;
-    s.set_read_timeout(Some(remaining())).ok();
-    let mut buf = [0u8; 64];
-    let mut got = Vec::new();
-    while !got.contains(&b'\n') && got.len() < 512 {
-        let n = s.read(&mut buf).map_err(io)?;
-        if n == 0 {
-            break;
+    s.write_all(req.as_bytes()).map_err(io)?;
+    let mut line = Vec::new();
+    let mut b = [0u8; 1];
+    while line.len() < 256 {
+        match s.read(&mut b) {
+            Ok(0) => break,
+            Ok(_) if b[0] == b'\n' => break,
+            Ok(_) => line.push(b[0]),
+            Err(e) => return Err(io(e)),
         }
-        got.extend_from_slice(&buf[..n]);
     }
-    let line = String::from_utf8_lossy(&got).lines().next().unwrap_or("").to_string();
-    if line.starts_with("HTTP/1.") {
-        Ok(line)
-    } else {
-        Err(ProbeError::Remote("no response through the server (check the server address, credentials and transport settings)".into()))
+    let line = String::from_utf8_lossy(&line).trim().to_string();
+    let code = line.split_whitespace().nth(1).unwrap_or("");
+    match code {
+        "" => Err(ProbeError::Remote("no response through the server".into())),
+        "407" => Err(ProbeError::Local("the local proxy rejected its own credentials".into())),
+        "502" | "503" | "504" => Err(ProbeError::Remote(format!("the server could not reach the probe target ({line})"))),
+        _ => Ok(line),
     }
 }
 
-/// Tries each target until one succeeds. `cancelled` is polled between attempts.
-pub fn probe(socks_port: u16, targets: &[Target], per_target: Duration, cancelled: &dyn Fn() -> bool) -> Result<String, ProbeError> {
+pub fn probe(port: u16, auth: &crate::xrayconf::IdeAuth, targets: &[Target], per_target: Duration, cancelled: &dyn Fn() -> bool) -> Result<String, ProbeError> {
     let mut last = ProbeError::Remote("no probe targets".into());
     for t in targets {
         if cancelled() {
             return Err(ProbeError::Local("cancelled".into()));
         }
-        match probe_once(socks_port, t, per_target) {
+        match probe_once(port, auth, t, per_target) {
             Ok(l) => return Ok(l),
             Err(e @ ProbeError::Local(_)) => return Err(e),
             Err(e) => last = e,

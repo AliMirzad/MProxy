@@ -111,6 +111,7 @@ fn command_injection_strings_stay_inert_data() {
         browser_port: Some(1080),
         jetbrains: crate::xrayconf::JetbrainsPorts { socks: None, http: None },
         ide_auth: None,
+        browser_auth: None,
         log_level: "warning",
     });
     assert!(!cfg.to_string().contains("rm -rf"), "display names never reach the Xray config");
@@ -195,6 +196,7 @@ fn generated_config_contains_only_allowlisted_capabilities() {
             browser_port: Some(1080),
             jetbrains: crate::xrayconf::JetbrainsPorts { socks: Some(10808), http: Some(10809) },
             ide_auth: Some(crate::xrayconf::IdeAuth { user: "u".into(), pass: "p".into() }),
+            browser_auth: Some(crate::xrayconf::IdeAuth { user: "b".into(), pass: "q".into() }),
             log_level: "warning",
         });
         let s = cfg.to_string();

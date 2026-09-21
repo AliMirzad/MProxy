@@ -361,7 +361,20 @@ try {
   }
   await shot(popup, '03-connected');
   const pst = await sw.evaluate(() => chrome.proxy.settings.get({}));
-  check('chrome.proxy uses loopback SOCKS5', pst.value.rules.singleProxy.host === '127.0.0.1' && pst.value.rules.singleProxy.scheme === 'socks5', JSON.stringify(pst.value.rules.singleProxy));
+  check('chrome.proxy uses the loopback HTTP proxy', pst.value.rules.singleProxy.host === '127.0.0.1' && pst.value.rules.singleProxy.scheme === 'http', JSON.stringify(pst.value.rules.singleProxy));
+  {
+    // Another local process (this test runner) tries to use the browser's tunnel port.
+    const bport = pst.value.rules.singleProxy.port;
+    const firstLine = (t) => t.split(String.fromCharCode(13))[0];
+    const is407 = (t) => firstLine(t).startsWith('HTTP/1.1 407') || firstLine(t).startsWith('HTTP/1.0 407');
+    const stolen = await viaHttpProxy(bport, server.probeUrl, null);
+    check('another local process cannot use the browser tunnel port (407)', is407(stolen), firstLine(stolen));
+    const guessed = await viaHttpProxy(bport, server.probeUrl, { username: 'b', password: 'guess' });
+    check('guessed credentials are refused (407)', is407(guessed), firstLine(guessed));
+    const uiText = await popup.evaluate(() => JSON.stringify(document.body.innerText) + JSON.stringify(localStorage));
+    const appState = await popup.evaluate(() => chrome.runtime.sendMessage({ type: 'getState' }));
+    check('browser tunnel credentials never reach the popup', !JSON.stringify(appState).includes('password') && !uiText.includes('username'), JSON.stringify(appState.status?.proxy));
+  }
   const expectedBypass = ['<local>', 'localhost', '127.0.0.0/8', '[::1]', '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '169.254.0.0/16', '100.64.0.0/10', 'fc00::/7', 'fe80::/10'];
   check('bypass list is exactly the documented local/private ranges', JSON.stringify(pst.value.rules.bypassList) === JSON.stringify(expectedBypass), JSON.stringify(pst.value.rules.bypassList));
   const badge = await sw.evaluate(() => chrome.action.getBadgeText({}));
