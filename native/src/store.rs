@@ -118,6 +118,8 @@ pub struct MergeReport {
     pub updated: usize,
     pub removed: usize,
     pub server_ids: Vec<String>,
+    /// Entries skipped because the same server appeared earlier in the batch.
+    pub duplicates: usize,
 }
 
 pub fn now() -> u64 {
@@ -316,8 +318,16 @@ pub fn merge(
 ) -> Result<MergeReport, StoreError> {
     let mut report = MergeReport::default();
     let mut seen: Vec<String> = Vec::new();
+    let mut batch_idents: Vec<String> = Vec::new();
     for mut p in parsed {
         let ident = p.identity();
+        // The same server twice in one batch (same protocol, endpoint, credentials, transport):
+        // keep the first, so a subscription can never multiply entries.
+        if batch_idents.contains(&ident) {
+            report.duplicates += 1;
+            continue;
+        }
+        batch_idents.push(ident.clone());
         let existing = state.servers.iter().position(|m| {
             m.subscription_id.as_deref() == subscription_id
                 && !seen.contains(&m.id)
@@ -453,4 +463,42 @@ mod tests {
         assert!(s.state().unwrap().servers.is_empty());
         s.update_all(|st, sec| merge(st, sec, vec![parse_link(L1).unwrap()], None)).unwrap();
     }
+
+    fn parsed(link: &str) -> ParsedServer {
+        crate::parse::parse_link(link).unwrap()
+    }
+
+    #[test]
+    fn duplicates_in_one_batch_are_collapsed_but_cdn_fronted_servers_are_not() {
+        let (_d, st) = store();
+        let a = "vless://b831381d-6324-4d53-ad4f-8cda48b30811@cdn.example.com:443?security=tls&sni=de.example.com&type=ws&host=de.example.com&path=%2Fws#DE";
+        let a_again = "vless://b831381d-6324-4d53-ad4f-8cda48b30811@cdn.example.com:443?security=tls&sni=de.example.com&type=ws&host=de.example.com&path=%2Fws#DE%20copy";
+        let fi = "vless://b831381d-6324-4d53-ad4f-8cda48b30811@cdn.example.com:443?security=tls&sni=fi.example.com&type=ws&host=fi.example.com&path=%2Fws#FI";
+        let r = st.update_all(|s, sec| merge(s, sec, vec![parsed(a), parsed(a_again), parsed(fi)], Some("sub1"))).unwrap();
+        assert_eq!((r.added, r.duplicates), (2, 1));
+        assert_eq!(st.state().unwrap().servers.len(), 2);
+        // Re-running the same subscription never multiplies entries.
+        for _ in 0..3 {
+            let r = st.update_all(|s, sec| merge(s, sec, vec![parsed(a), parsed(a_again), parsed(fi)], Some("sub1"))).unwrap();
+            assert_eq!((r.added, r.updated, r.removed), (0, 2, 0));
+        }
+        assert_eq!(st.state().unwrap().servers.len(), 2);
+    }
+
+    #[test]
+    fn update_shrinks_a_bloated_subscription() {
+        // A list imported by the old per-outbound behaviour (many alternatives per server) is
+        // reconciled by the next update: extra entries are removed.
+        let (_d, st) = store();
+        let many: Vec<ParsedServer> = (0..12)
+            .map(|i| parsed(&format!("vless://b831381d-6324-4d53-ad4f-8cda48b30811@front{i}.example.com:443?security=tls&sni=de.example.com#DE")))
+            .collect();
+        st.update_all(|s, sec| merge(s, sec, many, Some("sub1"))).unwrap();
+        assert_eq!(st.state().unwrap().servers.len(), 12);
+        let one = vec![parsed("vless://b831381d-6324-4d53-ad4f-8cda48b30811@front0.example.com:443?security=tls&sni=de.example.com#DE")];
+        let r = st.update_all(|s, sec| merge(s, sec, one, Some("sub1"))).unwrap();
+        assert_eq!((r.updated, r.removed), (1, 11));
+        assert_eq!(st.state().unwrap().servers.len(), 1);
+    }
+
 }

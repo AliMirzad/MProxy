@@ -1,7 +1,7 @@
 // Extension <-> native helper protocol, version 1.
 // Mirrors native/src/protocol.rs and native/src/service.rs. See PROTOCOL.md.
 
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 export const HOST_NAME = 'com.privateproxy.host';
 
 export type ErrorCode =

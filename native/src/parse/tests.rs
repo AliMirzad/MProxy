@@ -352,3 +352,35 @@ fn never_panics_on_garbage() {
         let _ = parse_link(&String::from_utf8_lossy(&m));
     }
 }
+
+// ------------------------------------------------------------------ Xray-JSON subscriptions
+
+/// Xray-JSON subscriptions put several alternative outbounds (CDN fronts, load-balanced) into each
+/// config. Each config is one server; only its main outbound is imported.
+#[test]
+fn json_config_with_alternative_outbounds_is_one_server() {
+    let ob = |addr: &str, tag: &str, host: &str| {
+        format!(r#"{{"tag":"{tag}","protocol":"vless","settings":{{"vnext":[{{"address":"{addr}","port":443,"users":[{{"id":"{UUID}","encryption":"none"}}]}}]}},"streamSettings":{{"network":"ws","security":"tls","tlsSettings":{{"serverName":"{host}"}},"wsSettings":{{"path":"/ws","headers":{{"Host":"{host}"}}}}}}}}"#)
+    };
+    let cfg = |name: &str, host: &str| {
+        format!(
+            r#"{{"remarks":"{name}","outbounds":[{},{},{},{{"tag":"direct","protocol":"freedom"}}],"routing":{{"balancers":[{{"tag":"b","selector":["proxy"]}}]}}}}"#,
+            ob("cdnjs.com", "proxy", host),
+            ob("chatgpt.com", "proxy-2", host),
+            ob("sourceforge.net", "proxy-3", host)
+        )
+    };
+    let body = format!(
+        r#"[{},{},{{"remarks":"trojan only","outbounds":[{{"protocol":"trojan","settings":{{}}}}]}}]"#,
+        cfg("DE [CDN1]", "de.example.com"),
+        cfg("FI [CDN1]", "fi.example.com")
+    );
+    let b = parse_subscription(&body).unwrap();
+    assert_eq!(b.servers.len(), 2, "one server per config, not one per outbound");
+    assert_eq!(b.unsupported, 1);
+    assert_eq!(b.servers[0].meta.name, "DE [CDN1]");
+    assert_eq!(b.servers[0].meta.address, "cdnjs.com", "the main (first) outbound");
+    assert!(b.servers[0].warnings.iter().any(|w| w.contains("2 more alternative")), "{:?}", b.servers[0].warnings);
+    // Same CDN front address, different Host/SNI: two different servers.
+    assert_ne!(b.servers[0].identity(), b.servers[1].identity());
+}

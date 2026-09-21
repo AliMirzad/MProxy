@@ -209,14 +209,18 @@ impl ParsedServer {
     }
 }
 
+/// Two entries are the same server only if everything that decides where the connection really
+/// goes matches: CDN-fronted subscriptions reuse one front address (e.g. a CDN hostname) for many
+/// different servers and tell them apart by Host header, path, service name or SNI.
 pub fn identity_of(meta: &ServerMeta, secrets: &ServerSecrets) -> String {
     format!(
-        "{}|{}|{}|{}|{}",
+        "{}|{}|{}|{}|{}|{}",
         meta.protocol.as_str(),
         meta.address.to_ascii_lowercase(),
         meta.port,
         secrets.user_id,
-        meta.transport.name()
+        serde_json::to_string(&meta.transport).unwrap_or_default(),
+        serde_json::to_string(&meta.security).unwrap_or_default()
     )
 }
 

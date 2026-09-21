@@ -27,7 +27,7 @@ class FakePort implements PortLike {
   }
 }
 
-const hello = { nativeVersion: '1.0.0', protocolVersion: 1, xrayVersion: '26.3.27', xrayAvailable: true, platform: 'windows-x86_64', keyStorage: 'x' };
+const hello = { nativeVersion: '1.0.0', protocolVersion: 2, xrayVersion: '26.3.27', xrayAvailable: true, platform: 'windows-x86_64', keyStorage: 'x' };
 const jb = { enabled: true, mode: 'direct' as const, socksPort: 10808, httpPort: 10809, issue: null, authRequired: true };
 const status = (s: Partial<NativeStatus>): NativeStatus => ({ state: 'disconnected', jetbrains: jb, xrayAvailable: true, ...s });
 
@@ -90,7 +90,7 @@ describe('Controller', () => {
     await env.c.start();
     await tick();
     expect(env.log[0]).toBe('clear');
-    expect(env.ports[0].sent[0]).toMatchObject({ cmd: 'hello', args: { protocolVersion: 1 } });
+    expect(env.ports[0].sent[0]).toMatchObject({ cmd: 'hello', args: { protocolVersion: 2 } });
     expect(env.c.state.runtime.kind).toBe('ready');
   });
 

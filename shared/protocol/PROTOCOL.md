@@ -1,4 +1,4 @@
-# Extension ↔ native helper protocol (v1)
+# Extension ↔ native helper protocol (v2)
 
 Transport: Chromium native messaging. Each message is a 32-bit length in native byte order
 followed by UTF-8 JSON. The extension's service worker holds one long-lived
@@ -80,6 +80,6 @@ Messages are short and meant for the user. Technical detail goes to the helper l
 
 ## Versioning
 
-`PROTOCOL_VERSION` (currently 1) changes on any incompatible change. The extension sends
+`PROTOCOL_VERSION` (currently 2; v2 added the IDE credential commands and `authRequired`) changes on any incompatible change. The extension sends
 its version in `hello`. On a mismatch the helper answers `INCOMPATIBLE_VERSION`, naming
 the side to update, and the popup shows **Update required**.

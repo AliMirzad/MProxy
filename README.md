@@ -95,7 +95,8 @@ Popup → **+ Import**:
 * **QR code:** choose an image, paste one (Ctrl/⌘+V), or **Scan current tab**. Decoding is local, and URLs in QR codes are never opened.
 * **Subscription:** name + HTTPS URL. It is fetched immediately; refresh later in Settings → Subscriptions → **Update** (manual only).
 
-Per-entry errors are listed. Other entries still import. Servers can be renamed or deleted from the list.
+Xray-JSON subscriptions import one server per config (its main outbound; alternative CDN paths inside a config are
+not separate servers), and identical servers are merged. Per-entry errors are listed. Other entries still import. Servers can be renamed or deleted from the list.
 
 ## Connecting
 

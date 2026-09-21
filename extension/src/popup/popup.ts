@@ -13,6 +13,19 @@ let view: 'main' | 'import' | 'settings' = 'main';
 let busyAction = false;
 let serverFilter: ServerFilter = 'all';
 let renaming = false;
+/** A pending destructive action waiting for the user's confirmation. */
+let confirmAction: { text: string; label: string; run: () => Promise<void> } | null = null;
+
+/** The server shown as selected in the dropdown (what Rename/Delete/Connect act on). */
+function selectedServer() {
+  const id = $<HTMLSelectElement>('server-select').value || list.selectedServerId;
+  return list.servers.find((s) => s.id === id) ?? null;
+}
+
+/** The subscription chosen in the "Show" filter, if any. */
+function filteredSubscription() {
+  return serverFilter.startsWith('sub:') ? list.subscriptions.find((x) => `sub:${x.id}` === serverFilter) ?? null : null;
+}
 
 function request<K extends CommandName>(cmd: K, args: Commands[K]): Promise<NativeResponse> {
   return chrome.runtime.sendMessage({ type: 'request', cmd, args }) as Promise<NativeResponse>;
@@ -120,8 +133,18 @@ function render() {
   $('protocol-line').textContent = server
     ? `${protocolLine(server)} · ${server.address}:${server.port}${subName ? ` · from "${subName}"` : ''}`
     : '';
-  $<HTMLButtonElement>('server-rename').disabled = locked || !server || renaming;
-  $<HTMLButtonElement>('server-delete').disabled = locked || !server || renaming;
+  const busy = locked || renaming || !!confirmAction;
+  $<HTMLButtonElement>('server-rename').disabled = busy || !server;
+  $<HTMLButtonElement>('server-delete').disabled = busy || !server;
+  const sub = filteredSubscription();
+  $('sub-tools').hidden = !sub;
+  $<HTMLButtonElement>('sub-update').disabled = busy;
+  $<HTMLButtonElement>('sub-delete').disabled = busy;
+  $('confirm-row').hidden = !confirmAction;
+  if (confirmAction) {
+    $('confirm-text').textContent = confirmAction.text;
+    $('confirm-yes').textContent = confirmAction.label;
+  }
   $('empty-servers').hidden = list.servers.length > 0;
 
   // Primary button
@@ -192,9 +215,10 @@ async function onFilterChange(value: string) {
 }
 
 function startRename() {
-  const server = list.servers.find((s) => s.id === list.selectedServerId);
+  const server = selectedServer();
   if (!server) return;
   renaming = true;
+  renameTarget = server.id;
   render();
   const input = $<HTMLInputElement>('rename-input');
   input.value = server.name;
@@ -202,8 +226,9 @@ function startRename() {
   input.select();
 }
 
+let renameTarget: string | null = null;
 async function finishRename(save: boolean) {
-  const server = list.servers.find((s) => s.id === list.selectedServerId);
+  const server = list.servers.find((s) => s.id === renameTarget) ?? selectedServer();
   const name = $<HTMLInputElement>('rename-input').value.trim();
   renaming = false;
   if (save && server && name && name !== server.name) {
@@ -214,24 +239,64 @@ async function finishRename(save: boolean) {
   render();
 }
 
-let deleteArmed: ReturnType<typeof setTimeout> | null = null;
-async function deleteSelected() {
-  const btn = $<HTMLButtonElement>('server-delete');
-  const server = list.servers.find((s) => s.id === list.selectedServerId);
+function askConfirm(text: string, label: string, run: () => Promise<void>) {
+  confirmAction = { text, label, run };
+  render();
+}
+
+async function answerConfirm(yes: boolean) {
+  const action = confirmAction;
+  confirmAction = null;
+  render();
+  if (yes && action) await action.run();
+}
+
+function deleteSelected() {
+  const server = selectedServer();
   if (!server) return;
-  if (!deleteArmed) {
-    btn.textContent = 'Confirm delete?';
-    deleteArmed = setTimeout(() => {
-      deleteArmed = null;
-      btn.textContent = 'Delete';
-    }, 3000);
-    return;
+  askConfirm(`Delete server "${server.name}"?`, 'Delete server', async () => {
+    const r = await request('deleteServer', { id: server.id });
+    if (r.ok) toast(`Deleted "${server.name}"`);
+    else toast(r.error.message);
+    await refreshList();
+  });
+}
+
+function deleteFilteredSubscription() {
+  const sub = filteredSubscription();
+  if (!sub) return;
+  const n = list.servers.filter((x) => x.subscriptionId === sub.id).length;
+  askConfirm(`Delete subscription "${sub.name}" and its ${n} server${n === 1 ? '' : 's'}?`, 'Delete subscription', async () => {
+    const r = await request('deleteSubscription', { id: sub.id, deleteServers: true });
+    if (r.ok) {
+      toast(`Deleted subscription "${sub.name}"`);
+      serverFilter = 'all';
+      try {
+        await chrome.storage.local.set({ serverFilter });
+      } catch {
+        /* preference only */
+      }
+    } else {
+      toast(r.error.message);
+    }
+    await refreshList();
+  });
+}
+
+async function updateFilteredSubscription() {
+  const sub = filteredSubscription();
+  if (!sub) return;
+  const btn = $<HTMLButtonElement>('sub-update');
+  btn.disabled = true;
+  btn.textContent = 'Updating…';
+  const r = await request('updateSubscription', { id: sub.id });
+  btn.textContent = 'Update subscription';
+  if (r.ok) {
+    const x = r.result as SubscriptionResult;
+    toast(`Updated: ${x.added} new, ${x.updated} updated, ${x.removed} removed`);
+  } else {
+    toast(r.error.message);
   }
-  clearTimeout(deleteArmed);
-  deleteArmed = null;
-  btn.textContent = 'Delete';
-  const r = await request('deleteServer', { id: server.id });
-  if (!r.ok) toast(r.error.message);
   await refreshList();
 }
 
@@ -415,10 +480,19 @@ let idePassword = '';
 
 async function loadIdeCredentials(required: boolean) {
   $('jb-cred').hidden = !required;
+  const err = $('jb-cred-error');
+  err.hidden = true;
   if (!required) return;
+  $('jb-user').textContent = '…';
+  $('jb-pass').textContent = '…';
+  idePassword = '';
   const r = await request('getIdeCredentials', {});
   if (!r.ok) {
-    showResult($('settings-result'), r.error.message, true);
+    // Shown in the box itself, so an empty username/password is never silent.
+    err.textContent = `Could not load the credentials: ${r.error.message}`;
+    err.hidden = false;
+    $('jb-user').textContent = '—';
+    $('jb-pass').textContent = '—';
     return;
   }
   const c = r.result as IdeCredentials;
@@ -505,7 +579,11 @@ function wire() {
   };
   $<HTMLSelectElement>('server-filter').onchange = (e) => void onFilterChange((e.target as HTMLSelectElement).value);
   $('server-rename').onclick = () => startRename();
-  $('server-delete').onclick = () => void deleteSelected();
+  $('server-delete').onclick = () => deleteSelected();
+  $('sub-delete').onclick = () => deleteFilteredSubscription();
+  $('sub-update').onclick = () => void updateFilteredSubscription();
+  $('confirm-yes').onclick = () => void answerConfirm(true);
+  $('confirm-no').onclick = () => void answerConfirm(false);
   $('rename-save').onclick = () => void finishRename(true);
   $('rename-cancel').onclick = () => void finishRename(false);
   $<HTMLInputElement>('rename-input').onkeydown = (e) => {
@@ -565,10 +643,24 @@ function wire() {
     const r = await request('setSettings', { allowPrivateSubscriptionHosts: (e.target as HTMLInputElement).checked });
     if (!r.ok) toast(r.error.message);
   };
-  $<HTMLInputElement>('jb-auth').onchange = (e) => {
-    if (!(e.target as HTMLInputElement).checked) {
-      showResult($('settings-result'), 'Without a password, any program on this computer can use the IDE proxy. Click Save to apply.', true);
+  // Applies immediately (no Save needed) and shows/hides the credentials.
+  $<HTMLInputElement>('jb-auth').onchange = async (e) => {
+    const box = e.target as HTMLInputElement;
+    const r = await request('setSettings', { ideAuth: box.checked });
+    if (!r.ok) {
+      box.checked = !box.checked;
+      showResult($('settings-result'), r.error.message, true);
+      return;
     }
+    await loadIdeCredentials(box.checked);
+    const needs = (r.result as { reconnectRequired?: boolean }).reconnectRequired;
+    showResult(
+      $('settings-result'),
+      box.checked
+        ? `Password required for the IDE proxy.${needs ? ' Reconnect to apply.' : ''}`
+        : `Password turned off: any program on this computer can now use the IDE proxy.${needs ? ' Reconnect to apply.' : ''}`,
+      !box.checked,
+    );
   };
   $('jb-copy-user').onclick = () => void copyText($('jb-user').textContent ?? '', 'Username');
   $('jb-copy-pass').onclick = () => void copyText(idePassword, 'Password');

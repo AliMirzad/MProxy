@@ -4,7 +4,7 @@ import { BYPASS_LIST, controlProblem, proxyConfig } from '../src/background/chro
 import type { AppState } from '../src/shared/app-state';
 import type { NativeStatus, ServerSummary } from '../../shared/protocol/types';
 
-const hello = { nativeVersion: '1.0.0', protocolVersion: 1, xrayVersion: '26.3.27', xrayAvailable: true, platform: 'x', keyStorage: 'x' };
+const hello = { nativeVersion: '1.0.0', protocolVersion: 2, xrayVersion: '26.3.27', xrayAvailable: true, platform: 'x', keyStorage: 'x' };
 const jb = { enabled: true, mode: 'direct' as const, socksPort: 10808, httpPort: 10809, issue: null, authRequired: true };
 const app = (status: Partial<NativeStatus> | null, extra: Partial<AppState> = {}): AppState => ({
   runtime: { kind: 'ready', hello },

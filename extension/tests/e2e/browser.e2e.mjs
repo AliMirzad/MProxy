@@ -22,6 +22,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import net from 'node:net';
+import http from 'node:http';
 import { hostCandidates } from '../../../scripts/target-dir.mjs';
 import { startTestServer, freePort, MARKER } from '../../../scripts/lib/test-server.mjs';
 
@@ -275,6 +276,58 @@ try {
     check('unreachable server -> "Server unreachable" shown, browser stays direct', st.value.mode !== 'fixed_servers');
   }
 
+  // Server management through the real popup buttons.
+  {
+    const optionNames = () => popup.$$eval('#server-select option', (els) => els.map((e) => e.textContent.replace(/^● /, '')));
+    // Delete one server (the dead one): Delete server -> confirmation -> gone.
+    await popup.click('#primary').catch(() => undefined); // leave the error state
+    await waitFor(async () => (await popupState(popup)) === 'Disconnected', 'disconnected before delete', 10000).catch(() => undefined);
+    const deadId = await popup.$eval('#server-select', (sel) => [...sel.options].find((o) => o.textContent === 'E2E Dead Server')?.value);
+    await popup.selectOption('#server-select', deadId);
+    await popup.click('#server-delete');
+    const confirmText = await popup.textContent('#confirm-text');
+    check('Delete server asks for confirmation naming the server', /Delete server "E2E Dead Server"/.test(confirmText ?? ''), confirmText);
+    await popup.click('#confirm-yes');
+    await waitFor(async () => !(await optionNames()).includes('E2E Dead Server'), 'server deleted', 10000).catch(() => undefined);
+    check('Delete server removes exactly that server', !(await optionNames()).includes('E2E Dead Server') && (await optionNames()).length === 3, (await optionNames()).join(', '));
+
+    // Subscription: add, filter, update, delete with its servers.
+    let subBody = ['A', 'B'].map((n) => `vless://5783a3e7-e373-51cd-8642-c83782b807c5@sub${n.toLowerCase()}.example.com:443?security=tls&sni=sub.example.com#Sub%20${n}`).join('\n');
+    const subSrv = http.createServer((_q, res) => res.end(Buffer.from(subBody).toString('base64'))).listen(0, '127.0.0.1');
+    await new Promise((r) => subSrv.once('listening', r));
+    await popup.click('#nav-import');
+    await popup.click('[data-tab="sub"]');
+    await popup.fill('#sub-name', 'E2E Sub');
+    await popup.fill('#sub-url', `http://127.0.0.1:${subSrv.address().port}/sub`);
+    await popup.click('#sub-add-btn');
+    await waitFor(async () => /Subscription added|new/i.test((await popup.textContent('#import-result')) ?? ''), 'subscription added', 15000).catch(() => undefined);
+    await popup.click('#nav-back');
+    const filterValues = await popup.$$eval('#server-filter option', (els) => els.map((e) => [e.value, e.textContent]));
+    const subOpt = filterValues.find(([, t]) => t.startsWith('Subscription: E2E Sub'));
+    check('filter lists the subscription with its server count', !!subOpt && subOpt[1] === 'Subscription: E2E Sub (2)', filterValues.map((x) => x[1]).join(', '));
+    await popup.selectOption('#server-filter', subOpt[0]);
+    await popup.waitForTimeout(300);
+    check('filtering by subscription shows only its servers', JSON.stringify(await optionNames()) === JSON.stringify(['Sub A', 'Sub B']), (await optionNames()).join(', '));
+    await popup.selectOption('#server-filter', 'manual');
+    await popup.waitForTimeout(300);
+    check('"Manually added" shows only hand-imported servers', !(await optionNames()).some((n) => n.startsWith('Sub ')) && (await optionNames()).length === 3, (await optionNames()).join(', '));
+    await popup.selectOption('#server-filter', subOpt[0]);
+    await popup.waitForTimeout(300);
+    check('subscription tools appear when a subscription is chosen', await popup.isVisible('#sub-update') && await popup.isVisible('#sub-delete'));
+    subBody += '\nvless://5783a3e7-e373-51cd-8642-c83782b807c5@subc.example.com:443?security=tls&sni=sub.example.com#Sub%20C';
+    await popup.click('#sub-update');
+    await waitFor(async () => (await optionNames()).includes('Sub C'), 'subscription updated', 15000).catch(() => undefined);
+    check('Update subscription fetches the new server list', (await optionNames()).includes('Sub C'), (await optionNames()).join(', '));
+    await popup.click('#sub-delete');
+    const subConfirm = await popup.textContent('#confirm-text');
+    check('Delete subscription asks for confirmation with the server count', /Delete subscription "E2E Sub" and its 3 servers/.test(subConfirm ?? ''), subConfirm);
+    await popup.click('#confirm-yes');
+    await waitFor(async () => !(await optionNames()).some((n) => n.startsWith('Sub ')), 'subscription deleted', 10000).catch(() => undefined);
+    const afterFilters = await popup.$$eval('#server-filter option', (els) => els.map((e) => e.textContent));
+    check('Delete subscription removes it and all its servers', !(await optionNames()).some((n) => n.startsWith('Sub ')) && !afterFilters.some((t) => t.includes('E2E Sub')) && (await popup.$eval('#server-filter', (e) => e.value)) === 'all', `${(await optionNames()).join(', ')} | ${afterFilters.join(', ')}`);
+    subSrv.close();
+  }
+
   // 5. Connect each server and browse through it.
   for (const name of ['E2E Reality', 'E2E VLESS WS', 'E2E VMess WS']) {
     const id = await popup.$eval('#server-select', (sel, n) => [...sel.options].find((o) => o.textContent === n)?.value, name);
@@ -367,6 +420,12 @@ try {
 
   await popup.click('#nav-settings');
   await popup.waitForTimeout(500);
+  await waitFor(async () => (await popup.textContent('#jb-user')) === 'privateproxy', 'credentials shown', 5000).catch(() => undefined);
+  check('Settings shows the IDE username', (await popup.textContent('#jb-user')) === 'privateproxy', await popup.textContent('#jb-user'));
+  await popup.click('#jb-show-pass');
+  const shownPass = await popup.textContent('#jb-pass');
+  check('Settings shows the IDE password on "Show"', shownPass === ideCred.password, `${shownPass?.length} chars`);
+  await popup.click('#jb-show-pass');
   await shot(popup, '05-settings');
   await popup.click('#nav-back');
 

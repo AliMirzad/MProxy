@@ -47,6 +47,11 @@ to be allowed in incognito for that.
 **Browser closed → IDE lost connectivity.** The runtime lives with the browser. Keep the browser running,
 or enable "Continue running background apps" in its settings.
 
+**A subscription shows far more servers than it has.** Versions before this fix imported every outbound of
+an Xray-JSON subscription (each config contains several alternative CDN paths to the same server). Now each
+config is one server. Choose the subscription in **Show**, then click **Update subscription**: the extra entries
+are removed.
+
 ## Verifying DNS behaviour yourself
 
 1. Connect, open `chrome://net-export`, record for a minute of browsing, stop, and load the file in

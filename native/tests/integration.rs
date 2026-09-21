@@ -450,8 +450,8 @@ fn all_transports_end_to_end() {
     let e = env().unwrap();
     let o = opts(&e);
     let mut h = Host::start(&o);
-    let hello = h.ok("hello", json!({"protocolVersion": 1, "extensionVersion": "test"}));
-    assert_eq!(hello["protocolVersion"], 1);
+    let hello = h.ok("hello", json!({"protocolVersion": 2, "extensionVersion": "test"}));
+    assert_eq!(hello["protocolVersion"], 2);
     assert_eq!(hello["xrayAvailable"], true);
     assert!(hello["xrayVersion"].as_str().unwrap().starts_with("26."));
 
@@ -519,7 +519,7 @@ fn failures_and_idempotency() {
     let e = env().unwrap();
     let o = opts(&e);
     let mut h = Host::start(&o);
-    h.ok("hello", json!({"protocolVersion": 1, "extensionVersion": "test"}));
+    h.ok("hello", json!({"protocolVersion": 2, "extensionVersion": "test"}));
 
     // Incompatible protocol version.
     let r = h.req("hello", json!({"protocolVersion": 99, "extensionVersion": "x"}));
@@ -636,7 +636,7 @@ fn failures_and_idempotency() {
 fn xray_missing_is_reported() {
     let o = HostOpts { xray: None, probe_port: 1, jb_socks: free_port(), jb_http: free_port(), allow_loopback: true };
     let mut h = Host::start(&o);
-    let hello = h.ok("hello", json!({"protocolVersion": 1, "extensionVersion": "test"}));
+    let hello = h.ok("hello", json!({"protocolVersion": 2, "extensionVersion": "test"}));
     assert_eq!(hello["xrayAvailable"], false);
     let imp = h.ok("importText", json!({"text": format!("vless://{TEST_UUID}@example.com:443?security=tls#x"), "source": "paste"}));
     let id = imp["serverIds"][0].as_str().unwrap().to_string();
@@ -775,7 +775,7 @@ fn xray_isolation_and_listeners() {
     let e = env().unwrap();
     let o = opts(&e);
     let mut h = Host::start(&o);
-    h.ok("hello", json!({"protocolVersion": 1, "extensionVersion": "test"}));
+    h.ok("hello", json!({"protocolVersion": 2, "extensionVersion": "test"}));
     let (_, link) = links(&e).pop().unwrap(); // REALITY + Vision
     let imp = h.ok("importText", json!({"text": link, "source": "paste"}));
     let id = imp["serverIds"][0].as_str().unwrap().to_string();
@@ -844,7 +844,7 @@ fn xray_isolation_and_listeners() {
 fn hostile_native_messages() {
     let o = HostOpts { xray: xray_path(), probe_port: 1, jb_socks: free_port(), jb_http: free_port(), allow_loopback: true };
     let mut h = Host::start(&o);
-    h.ok("hello", json!({"protocolVersion": 1, "extensionVersion": "test"}));
+    h.ok("hello", json!({"protocolVersion": 2, "extensionVersion": "test"}));
     // No generic OS operations exist.
     for cmd in ["exec", "executeCommand", "runProcess", "openFile", "writeFile", "downloadAndExecute", "installPackage", "runScript", "shell", "powershell", "cmd", "bash", "setXrayArgs", "setEnv"] {
         let r = h.req(cmd, json!({"command": "calc.exe", "path": "C:\\Windows\\System32\\calc.exe", "args": ["-c", "id"]}));
@@ -975,7 +975,7 @@ fn tampered_xray_is_never_executed() {
     for bin in [patched, other] {
         let o = HostOpts { xray: Some(bin.clone()), probe_port: 1, jb_socks: free_port(), jb_http: free_port(), allow_loopback: true };
         let mut h = Host::start(&o);
-        let hello = h.ok("hello", json!({"protocolVersion": 1, "extensionVersion": "test"}));
+        let hello = h.ok("hello", json!({"protocolVersion": 2, "extensionVersion": "test"}));
         assert_eq!(hello["xrayAvailable"], false, "{}", bin.display());
         let st = h.ok("getStatus", json!({}));
         assert_eq!(st["jetbrains"]["mode"], "off", "passthrough must not start: {st}");
@@ -1199,7 +1199,7 @@ fn ide_endpoint_requires_password() {
     let e = env().unwrap();
     let o = opts(&e);
     let mut h = Host::start(&o);
-    h.ok("hello", json!({"protocolVersion": 1, "extensionVersion": "test"}));
+    h.ok("hello", json!({"protocolVersion": 2, "extensionVersion": "test"}));
     // The harness starts with ideAuth off; switch to the product default (on).
     h.ok("setSettings", json!({"ideAuth": true}));
     let c = h.ok("getIdeCredentials", json!({}));

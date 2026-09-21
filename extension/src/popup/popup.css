@@ -133,3 +133,8 @@ textarea { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-
 
 /* The hidden attribute must win over display rules such as .row { display: flex }. */
 [hidden] { display: none !important; }
+
+.confirm { border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; margin-top: 6px; }
+.confirm p { margin: 0 0 6px; }
+
+.cred .error { color: var(--err); margin: 0 0 4px; }

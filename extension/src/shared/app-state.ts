@@ -20,7 +20,7 @@ export interface AppState {
   extensionVersion: string;
 }
 
-export const EXTENSION_PROTOCOL_VERSION = 1;
+export const EXTENSION_PROTOCOL_VERSION = 2;
 
 /** Messages from extension pages (popup) to the service worker. */
 export type UiMessage =

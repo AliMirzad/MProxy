@@ -1,7 +1,13 @@
 //! Xray / V2Ray JSON import.
 //!
 //! Accepted shapes: a full client config (`{"outbounds":[...]}`), a single outbound object
-//! (`{"protocol":"vless",...}`), or a JSON array of either. Only VLESS/VMess outbounds are
+//! (`{"protocol":"vless",...}`), or a JSON array of either.
+//!
+//! A full config is **one server**: its main outbound is imported (Xray's default route: the first
+//! outbound if it is VLESS/VMess, else the one tagged `proxy`, else the first VLESS/VMess one).
+//! Subscriptions in Xray-JSON format often put many alternative paths to the same server
+//! (different CDN fronts, load-balanced) into each config; importing every outbound would turn one
+//! server into dozens of entries. Only VLESS/VMess outbounds are
 //! extracted. Every key of every object that is read is checked against the tables in
 //! `fields.rs`: unknown or dangerous keys reject the entry. The imported JSON is never executed
 //! or forwarded; the Xray config is regenerated from the normalized model (see `xrayconf.rs`).
@@ -46,7 +52,9 @@ fn warn_extra_headers(o: &Obj, ctx: &str, warnings: &mut Vec<String>) {
 
 pub fn parse_xray_json(text: &str) -> Result<ParseBatch, String> {
     let root: Value = serde_json::from_str(text).map_err(|e| format!("Invalid JSON: {}", e.to_string().chars().take(80).collect::<String>()))?;
-    let mut candidates: Vec<(Obj, Option<String>, bool)> = Vec::new();
+    // (outbound, remarks, config had other sections, number of alternative proxy outbounds skipped)
+    let mut candidates: Vec<(Obj, Option<String>, bool, usize)> = Vec::new();
+    let mut configs_without_proxy = 0usize;
     let mut collect = |item: &Value| -> Result<(), String> {
         let o = item.as_object().ok_or("JSON entries must be objects")?;
         if let Some(outs) = o.get("outbounds").and_then(Value::as_array) {
@@ -54,13 +62,20 @@ pub fn parse_xray_json(text: &str) -> Result<ParseBatch, String> {
             let remarks = str_of(o.get("remarks"));
             // Sections other than outbounds are never read; tell the user they were not used.
             let has_other = o.iter().any(|(k, v)| k != "outbounds" && k != "remarks" && !fields::is_empty(v));
-            for out in outs {
-                if let Some(oo) = out.as_object() {
-                    candidates.push((oo.clone(), remarks.clone(), has_other));
-                }
+            let is_proxy = |v: &Value| matches!(v.get("protocol").and_then(Value::as_str).map(str::to_ascii_lowercase).as_deref(), Some("vless") | Some("vmess"));
+            let proxies: Vec<&Obj> = outs.iter().filter(|v| is_proxy(v)).filter_map(Value::as_object).collect();
+            let main = outs
+                .first()
+                .filter(|v| is_proxy(v))
+                .and_then(Value::as_object)
+                .or_else(|| proxies.iter().copied().find(|o| o.get("tag").and_then(Value::as_str) == Some("proxy")))
+                .or_else(|| proxies.first().copied());
+            match main {
+                Some(m) => candidates.push((m.clone(), remarks, has_other, proxies.len() - 1)),
+                None => configs_without_proxy += 1,
             }
         } else if o.contains_key("protocol") {
-            candidates.push((o.clone(), None, false));
+            candidates.push((o.clone(), None, false, 0));
         } else {
             return Err("JSON is neither an Xray config nor an outbound".into());
         }
@@ -76,9 +91,9 @@ pub fn parse_xray_json(text: &str) -> Result<ParseBatch, String> {
         other => collect(other)?,
     }
 
-    let mut batch = ParseBatch::default();
+    let mut batch = ParseBatch { unsupported: configs_without_proxy, ..Default::default() };
     let mut entry = 0;
-    for (o, remarks, has_other) in candidates {
+    for (o, remarks, has_other, alternatives) in candidates {
         let proto = o.get("protocol").and_then(Value::as_str).unwrap_or("").to_ascii_lowercase();
         if proto != "vless" && proto != "vmess" {
             // freedom/blackhole/dns etc. are not servers; other proxies are unsupported.
@@ -90,6 +105,12 @@ pub fn parse_xray_json(text: &str) -> Result<ParseBatch, String> {
         entry += 1;
         match parse_outbound(&o, remarks.as_deref()) {
             Ok(mut p) => {
+                if alternatives > 0 {
+                    p.warnings.push(format!(
+                        "A config contained {} more alternative outbound(s) to the same server (load balancing / fallback); only its main outbound was imported",
+                        alternatives
+                    ));
+                }
                 if has_other {
                     p.warnings.push("Only the VLESS/VMess outbound was imported; the config's other sections (inbounds, routing, dns, ...) were not used".into());
                 }

@@ -36,7 +36,18 @@
           <div class="row server-tools">
             <button id="nav-import" type="button">+ Import</button>
             <button id="server-rename" type="button">Rename</button>
-            <button id="server-delete" type="button">Delete</button>
+            <button id="server-delete" type="button">Delete server</button>
+          </div>
+          <div id="sub-tools" class="row server-tools" hidden>
+            <button id="sub-update" type="button">Update subscription</button>
+            <button id="sub-delete" type="button">Delete subscription</button>
+          </div>
+          <div id="confirm-row" class="confirm" hidden>
+            <p id="confirm-text"></p>
+            <div class="row end">
+              <button id="confirm-no" class="small-btn" type="button">Cancel</button>
+              <button id="confirm-yes" class="danger small-btn" type="button">Delete</button>
+            </div>
           </div>
           <p id="empty-servers" class="muted" hidden>No servers yet. Click <b>+ Import</b> to add a VLESS or VMess configuration.</p>
         </div>
@@ -102,6 +113,7 @@
       <label class="check"><input id="jb-auth" type="checkbox" /> Require a password for the IDE proxy (recommended)</label>
       <div id="jb-cred" class="cred" hidden>
         <p class="muted small">In the IDE: HTTP Proxy → Proxy authentication → enter these.</p>
+        <p id="jb-cred-error" class="error small" hidden></p>
         <div class="row"><span class="cred-label">Username</span><code id="jb-user"></code><button id="jb-copy-user" class="small-btn" type="button">Copy</button></div>
         <div class="row"><span class="cred-label">Password</span><code id="jb-pass">••••••••</code><button id="jb-show-pass" class="small-btn" type="button">Show</button><button id="jb-copy-pass" class="small-btn" type="button">Copy</button></div>
         <div class="row end"><button id="jb-new-pass" class="small-btn" type="button">New password</button></div>
