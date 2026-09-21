@@ -1,0 +1,21 @@
+{
+  "name": "private-proxy",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Task runner for the Private Proxy monorepo (extension + native helper). See README.md.",
+  "scripts": {
+    "setup": "npm --prefix extension ci && node scripts/fetch-xray.mjs",
+    "build": "node scripts/cargo.mjs build && npm --prefix extension run build",
+    "build:release": "node scripts/cargo.mjs build --release && npm --prefix extension run build:release",
+    "dev": "npm --prefix extension run watch",
+    "runtime:install": "node scripts/dev-runtime.mjs install",
+    "runtime:uninstall": "node scripts/dev-runtime.mjs uninstall",
+    "test": "node scripts/cargo.mjs test && npm --prefix extension run typecheck && npm --prefix extension test",
+    "test:native": "node scripts/cargo.mjs test",
+    "test:extension": "npm --prefix extension run typecheck && npm --prefix extension test",
+    "test:e2e": "node scripts/cargo.mjs build && node extension/tests/e2e/browser.e2e.mjs",
+    "lint": "node scripts/cargo.mjs clippy --all-targets -- -D warnings",
+    "licenses": "node scripts/third-party.mjs",
+    "package": "node scripts/package.mjs"
+  }
+}

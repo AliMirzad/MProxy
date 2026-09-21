@@ -1,0 +1,56 @@
+# Builds and tests the native helper and the extension on Windows and macOS, and produces the
+# release packages as workflow artifacts. Not executed in the original development environment;
+# see docs/validation.md.
+name: build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: windows-x64
+          - os: macos-14 # Apple silicon
+            target: macos-arm64
+          - os: macos-13 # Intel
+            target: macos-x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install extension dependencies
+        working-directory: extension
+        run: npm ci
+      - name: Fetch pinned Xray (SHA-256 verified)
+        run: node scripts/fetch-xray.mjs ${{ matrix.target }}
+      - name: Extension tests + typecheck
+        working-directory: extension
+        run: |
+          npx tsc --noEmit
+          npx vitest run
+      - name: Native tests (unit + integration against real Xray)
+        env:
+          # CI has no interactive login keychain; integration tests use the file key provider.
+          PRIVATE_PROXY_INSECURE_FILE_KEY: "1"
+        run: node scripts/cargo.mjs test --release
+      - name: Package
+        run: node scripts/package.mjs --skip-tests --target ${{ matrix.target }} ${{ startsWith(matrix.os, 'macos') && '--pkg' || '' }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: private-proxy-${{ matrix.target }}
+          path: |
+            dist/*.zip
+            dist/*.tar.gz
+            dist/*.pkg

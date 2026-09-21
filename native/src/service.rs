@@ -778,7 +778,9 @@ impl Service {
             }
             Err(e) => {
                 self.attempt += 1;
-                self.fail(ErrorCode::ServerUnreachable, format!("Could not reach the internet through this server: {e}"), Some(sid));
+                // Technical detail goes to the log; the user gets a short, actionable message.
+                log::warn(format!("connectivity probe failed: {e}"));
+                self.fail(ErrorCode::ServerUnreachable, "Could not connect through this server.", Some(sid));
             }
         }
     }

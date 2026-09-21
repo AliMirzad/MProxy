@@ -46,3 +46,11 @@ opt-level = "z"
 lto = true
 codegen-units = 1
 strip = true
+
+# Keep dev/test builds small (full debug info for every dependency costs >2 GB).
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+

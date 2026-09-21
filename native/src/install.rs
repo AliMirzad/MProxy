@@ -73,12 +73,11 @@ fn replace_file(src: &Path, dst: &Path) -> Result<(), String> {
     if src == dst {
         return Ok(());
     }
-    if dst.exists() {
-        if fs::remove_file(dst).is_err() {
+    if dst.exists()
+        && fs::remove_file(dst).is_err() {
             let aside = dst.with_extension(format!("old-{}", std::process::id()));
             fs::rename(dst, &aside).map_err(|e| format!("cannot replace {} (close all browsers and retry): {e}", dst.display()))?;
         }
-    }
     fs::copy(src, dst).map_err(|e| format!("cannot copy {} -> {}: {e}", src.display(), dst.display()))?;
     // CopyFileEx copies alternate data streams; drop the downloaded-file mark (Zone.Identifier)
     // so the installed copy is not treated as an untrusted download.

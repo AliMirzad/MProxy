@@ -27,6 +27,10 @@ import { startTestServer, freePort, MARKER } from '../../../scripts/lib/test-ser
 const root = join(dirname(fileURLToPath(import.meta.url)), '../../..');
 const args = process.argv.slice(2);
 const headed = args.includes('--headed');
+const shotDir = args.includes('--screenshots') ? args[args.indexOf('--screenshots') + 1] : null;
+async function shot(page, name) {
+  if (shotDir) await page.screenshot({ path: join(shotDir, `${name}.png`), fullPage: true });
+}
 const win = process.platform === 'win32';
 const plat = `${win ? 'windows' : 'macos'}-${process.arch === 'arm64' ? 'arm64' : 'x64'}`;
 const xrayDir = join(root, 'native/xray/dist', plat);
@@ -150,8 +154,10 @@ try {
   check('extension loaded with pinned ID', sw.url().startsWith(`chrome-extension://${extId}/`), sw.url());
 
   const popup = await ctx.newPage();
+  await popup.setViewportSize({ width: 360, height: 560 });
   await popup.goto(`chrome-extension://${extId}/popup.html`);
   await waitFor(async () => (await popupState(popup)) === 'Disconnected', 'Disconnected state', 20000);
+  await shot(popup, '01-empty');
   check('native runtime reachable from the extension (hello)', true);
   const proxy0 = await sw.evaluate(() => chrome.proxy.settings.get({}));
   check('browser starts direct', proxy0.value.mode !== 'fixed_servers', JSON.stringify(proxy0.value));
@@ -167,13 +173,15 @@ try {
 
   // 4. Import via the UI.
   await popup.click('#nav-import');
-  await popup.fill('#import-text', [server.links.reality, server.links.vlessWs, server.links.vmess].join('\n'));
+  const deadLink = `vless://5783a3e7-e373-51cd-8642-c83782b807c5@127.0.0.1:${await freePort()}?type=tcp&security=none#E2E%20Dead%20Server`;
+  await popup.fill('#import-text', [server.links.reality, server.links.vlessWs, server.links.vmess, deadLink].join('\n'));
   await popup.click('#import-btn');
   const imported = await waitFor(async () => {
     const t = await popup.textContent('#import-result');
     return t && !t.startsWith('Importing') ? t : null;
   }, 'import result');
-  check('import 3 servers via popup', imported.includes('Imported: 3 new'), imported);
+  check('import 4 servers via popup', imported.includes('Imported: 4 new'), imported);
+  await shot(popup, '02-import');
   await popup.click('#nav-back');
   const names = await popup.$$eval('#server-list .name', (els) => els.map((e) => e.textContent));
   check('server list shows imported names', names.includes('E2E Reality') && names.includes('E2E VMess WS'), names.join(', '));
@@ -191,6 +199,17 @@ try {
   }
   check('probe.test is NOT reachable before connecting (no local DNS for it)', !(await browserReachesProbe()));
 
+  // Unreachable server: clear error in the popup, browser stays direct.
+  {
+    const id = await popup.$eval('#server-select', (sel) => [...sel.options].find((o) => o.textContent === 'E2E Dead Server')?.value);
+    await popup.selectOption('#server-select', id);
+    await popup.click('#primary');
+    await waitFor(async () => (await popupState(popup)) === 'Server unreachable', 'error state', 30000);
+    await shot(popup, '04-error');
+    const st = await sw.evaluate(() => chrome.proxy.settings.get({}));
+    check('unreachable server -> "Server unreachable" shown, browser stays direct', st.value.mode !== 'fixed_servers');
+  }
+
   // 5. Connect each server and browse through it.
   for (const name of ['E2E Reality', 'E2E VLESS WS', 'E2E VMess WS']) {
     const id = await popup.$eval('#server-select', (sel, n) => [...sel.options].find((o) => o.textContent === n)?.value, name);
@@ -205,6 +224,7 @@ try {
     const reached = await waitFor(browserReachesProbe, `browse via ${name}`, 15000).catch(() => false);
     check(`browser traffic goes through ${name} (remote DNS)`, reached);
   }
+  await shot(popup, '03-connected');
   const pst = await sw.evaluate(() => chrome.proxy.settings.get({}));
   check('chrome.proxy uses loopback SOCKS5', pst.value.rules.singleProxy.host === '127.0.0.1' && pst.value.rules.singleProxy.scheme === 'socks5', JSON.stringify(pst.value.rules.singleProxy));
   const badge = await sw.evaluate(() => chrome.action.getBadgeText({}));
@@ -223,6 +243,11 @@ try {
     return d.result.xrayPid && d.result.xrayPid !== pid && (await popupState(popup)) === 'Connected';
   }, 'xray restart', 20000);
   check('Xray crash -> automatic restart, still browsing', await waitFor(browserReachesProbe, 'browse after restart', 15000).catch(() => false));
+
+  await popup.click('#nav-settings');
+  await popup.waitForTimeout(500);
+  await shot(popup, '05-settings');
+  await popup.click('#nav-back');
 
   // 7. Disconnect.
   await popup.click('#primary');

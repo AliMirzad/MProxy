@@ -294,7 +294,7 @@ impl Host {
     fn wait_status(&mut self, what: &str, timeout: Duration, pred: impl Fn(&Value) -> bool) -> Value {
         let deadline = Instant::now() + timeout;
         loop {
-            for e in self.events.drain(..).collect::<Vec<_>>() {
+            for e in std::mem::take(&mut self.events) {
                 if e["event"] == "status" && pred(&e["status"]) {
                     return e["status"].clone();
                 }

@@ -281,7 +281,7 @@ pub fn reality_short_id(v: Option<&str>) -> VResult<Option<String>> {
     if v.is_empty() {
         return Ok(None);
     }
-    if v.len() > 16 || v.len() % 2 != 0 || !v.chars().all(|c| c.is_ascii_hexdigit()) {
+    if v.len() > 16 || !v.len().is_multiple_of(2) || !v.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err("REALITY short ID must be an even-length hex string of at most 16 characters".into());
     }
     Ok(Some(v.to_ascii_lowercase()))
