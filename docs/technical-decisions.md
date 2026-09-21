@@ -32,7 +32,7 @@ All parsing happens in the helper, so a single implementation serves every brows
 * Chrome passes the caller origin as `argv[1]`; the helper checks it against the allow-list
   baked in at install time (defence in depth; Chrome already enforces `allowed_origins`).
 * Size limits: messages to the helper ≤ 64 MiB, messages from the helper ≤ 1 MB (Chrome
-  limits). The helper caps inbound messages at 1 MiB and never sends anything near 1 MB.
+  limits). The helper caps inbound messages at 8 MiB (imports are limited to 5 MiB of text) and never sends anything near 1 MB.
 
 ## TD-3 Xray process model
 
@@ -55,7 +55,7 @@ All parsing happens in the helper, so a single implementation serves every brows
 
 | Topic | Finding (verified with `xray run -test`) | Consequence |
 |---|---|---|
-| `streamSettings.network` | `raw`/`tcp`, `ws`, `grpc`, `httpupgrade`, `xhttp`/`splithttp`, `kcp` accepted | generator uses `network` |
+| `streamSettings.network` | `raw`/`tcp`, `ws`, `grpc`, `httpupgrade`, `xhttp`/`splithttp` accepted | generator uses `network` |
 | HTTP/2 transport (`h2`/`http`) | **removed** – "migrated to XHTTP" | imports with `type=h2/http` are rejected with a clear message |
 | QUIC transport | **removed** | rejected |
 | ws, grpc, httpupgrade | accepted with deprecation warning | supported |
@@ -96,7 +96,7 @@ We therefore pin the release and generate `network`.
 
 ## TD-7 Secret storage
 
-* `servers.json`: metadata only (name, protocol, host, port, transport, security, subscription id).
+* `state.json`: metadata only (name, protocol, host, port, transport, security, subscription id).
 * `secrets.bin`: VLESS/VMess ids, REALITY password/shortId, subscription URLs, encrypted with
   **XChaCha20-Poly1305** (RustCrypto `chacha20poly1305`, no custom crypto).
 * The 256-bit data key is stored in the OS store through `keyring`:
