@@ -120,7 +120,7 @@ let context;
 const attackerDir = join(tmp, 'attacker-ext');
 mkdirSync(attackerDir, { recursive: true });
 writeFileSync(join(attackerDir, 'manifest.json'), JSON.stringify({
-  manifest_version: 3, name: 'E2E attacker', version: '1.0', permissions: ['nativeMessaging'], background: { service_worker: 'sw.js' },
+  manifest_version: 3, name: 'E2E attacker', version: '1.0', permissions: ['nativeMessaging', 'proxy'], background: { service_worker: 'sw.js' },
 }));
 writeFileSync(join(attackerDir, 'sw.js'), `
 const VICTIM = ${JSON.stringify(extId)};
@@ -149,6 +149,11 @@ globalThis.attack = async () => {
   });
   return out;
 };
+globalThis.takeOver = async () => {
+  await chrome.proxy.settings.set({ value: { mode: 'fixed_servers', rules: { singleProxy: { scheme: 'http', host: '127.0.0.1', port: 9 } } }, scope: 'regular' });
+  return (await chrome.proxy.settings.get({})).levelOfControl;
+};
+globalThis.release = async () => chrome.proxy.settings.clear({ scope: 'regular' });
 `);
 
 async function launch() {
@@ -273,6 +278,8 @@ try {
   await shot(popup, '03-connected');
   const pst = await sw.evaluate(() => chrome.proxy.settings.get({}));
   check('chrome.proxy uses loopback SOCKS5', pst.value.rules.singleProxy.host === '127.0.0.1' && pst.value.rules.singleProxy.scheme === 'socks5', JSON.stringify(pst.value.rules.singleProxy));
+  const expectedBypass = ['<local>', 'localhost', '127.0.0.0/8', '[::1]', '10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16', '169.254.0.0/16', '100.64.0.0/10', 'fc00::/7', 'fe80::/10'];
+  check('bypass list is exactly the documented local/private ranges', JSON.stringify(pst.value.rules.bypassList) === JSON.stringify(expectedBypass), JSON.stringify(pst.value.rules.bypassList));
   const badge = await sw.evaluate(() => chrome.action.getBadgeText({}));
   check('toolbar badge shows ON', badge === 'ON');
   const rtc = await sw.evaluate(() => chrome.privacy.network.webRTCIPHandlingPolicy.get({}));
@@ -361,6 +368,32 @@ try {
   check('JetBrains endpoint keeps working (direct) after disconnect', direct.includes(MARKER));
   const directProbe = await viaHttpProxy(jbHttp, server.probeUrl);
   check('JetBrains endpoint is really direct after disconnect (probe.test unresolvable)', !directProbe.includes(MARKER));
+
+  // Security: another extension takes over the browser proxy while we are connected. The popup
+  // must never keep saying "Connected" when our setting is no longer in effect.
+  {
+    await popup.click('#primary');
+    await waitFor(async () => (await popupState(popup)) === 'Connected', 'Connected before takeover', 30000);
+    const attacker = ctx.serviceWorkers().find((w) => !w.url().includes(extId));
+    const lvl = await attacker.evaluate(() => globalThis.takeOver());
+    const ours = await sw.evaluate(() => chrome.proxy.settings.get({}));
+    if (ours.levelOfControl === 'controlled_by_this_extension') {
+      check('proxy takeover by another extension: ours keeps precedence', true, lvl);
+    } else {
+      const label = await waitFor(async () => {
+        const l = await popupState(popup);
+        return l !== 'Connected' ? l : null;
+      }, 'takeover detected', 15000).catch(() => 'still Connected');
+      const shown = await popup.evaluate(() => document.body.innerText);
+      check('proxy takeover by another extension -> tunnel disconnected, UI no longer says Connected', label !== 'still Connected' && /another extension/i.test(shown), `${label}; attacker=${lvl}`);
+    }
+    await attacker.evaluate(() => globalThis.release());
+    await popup.waitForTimeout(500);
+    if ((await popupState(popup)) === 'Connected') {
+      await popup.click('#primary');
+      await waitFor(async () => (await popupState(popup)) !== 'Connected', 'disconnect after takeover test', 15000);
+    }
+  }
 
   // 8. Browser killed while connected -> on next start there is no stale proxy.
   await popup.click('#primary');
