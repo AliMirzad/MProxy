@@ -3,8 +3,8 @@
 //! Values may be strings or numbers depending on the generator.
 
 use super::stream::{self, StreamParams};
-use crate::model::*;
-use crate::validate as v;
+use crate::core::profile::*;
+use crate::core::validate as v;
 use serde_json::Value;
 
 fn s(obj: &serde_json::Map<String, Value>, k: &str) -> Option<String> {

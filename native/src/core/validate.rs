@@ -3,7 +3,7 @@
 //! Everything here treats its input as hostile: imported links, JSON and subscription
 //! bodies all end up in these functions before anything is stored or handed to Xray.
 
-use crate::model::*;
+use crate::core::profile::*;
 use base64::Engine;
 use serde_json::{Map, Value};
 
@@ -411,7 +411,7 @@ fn xmux(v: &Value) -> VResult<Value> {
     let o = v.as_object().ok_or("XHTTP xmux must be an object")?;
     let mut m = Map::new();
     for (k, val) in o {
-        if !crate::parse::fields::XMUX.contains(&k.as_str()) {
+        if !crate::core::import::fields::XMUX.contains(&k.as_str()) {
             return Err(format!("Unsupported XHTTP xmux field \"{}\"", truncate(k, 32)));
         }
         let ok = matches!(val, Value::Number(n) if n.as_u64().is_some())
@@ -445,7 +445,7 @@ fn sanitize_extra(v: &Value, warnings: &mut Vec<String>, allow_download: bool) -
     let mut out = Map::new();
     for (k, val) in obj {
         let key = k.as_str();
-        if crate::parse::fields::XHTTP_SCALARS.contains(&key) {
+        if crate::core::import::fields::XHTTP_SCALARS.contains(&key) {
             out.insert(k.clone(), xhttp_scalar(key, val)?);
             continue;
         }
@@ -480,12 +480,12 @@ fn sanitize_extra(v: &Value, warnings: &mut Vec<String>, allow_download: bool) -
 }
 
 fn sanitize_download_settings(o: &Map<String, Value>, warnings: &mut Vec<String>) -> VResult<Value> {
-    use crate::parse::fields;
+    use crate::core::import::fields;
     fields::check(o, "downloadSettings", fields::DOWNLOAD_SETTINGS, warnings)?;
     let mut out = Map::new();
     if let Some(a) = o.get("address").and_then(Value::as_str) {
         let a = address(a)?;
-        crate::netpolicy::check_server_address(&a)?;
+        crate::core::netpolicy::check_server_address(&a)?;
         out.insert("address".into(), Value::String(a));
     }
     if let Some(p) = o.get("port") {
@@ -572,7 +572,7 @@ fn sanitize_download_settings(o: &Map<String, Value>, warnings: &mut Vec<String>
 /// Cross-field validation of a complete parsed server. Called by every parser.
 pub fn server(p: &mut ParsedServer) -> VResult<()> {
     let m = &p.meta;
-    crate::netpolicy::check_server_address(&m.address)?;
+    crate::core::netpolicy::check_server_address(&m.address)?;
     if let Security::Reality { .. } = m.security {
         if !matches!(m.transport, Transport::Raw { .. } | Transport::Xhttp { .. } | Transport::Grpc { .. }) {
             return Err(format!("REALITY cannot be used with the {} transport", m.transport.display()));

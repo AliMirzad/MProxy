@@ -54,13 +54,13 @@ pub fn home_dir() -> PathBuf {
     home()
 }
 
-/// Restrict a directory to the current user (see [`crate::harden::restrict_dir`]).
+/// Restrict a directory to the current user (see [`crate::platform::harden::restrict_dir`]).
 pub fn harden_dir(p: &std::path::Path) {
-    if let Err(e) = crate::harden::restrict_dir(p) {
+    if let Err(e) = crate::platform::harden::restrict_dir(p) {
         crate::log::warn(format!("could not restrict permissions of {}: {e}", p.display()));
     }
 }
 
 pub fn harden_file(p: &std::path::Path) {
-    crate::harden::restrict_file(p);
+    crate::platform::harden::restrict_file(p);
 }

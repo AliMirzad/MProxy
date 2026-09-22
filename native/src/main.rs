@@ -4,16 +4,21 @@
 //! Also offers `install`, `uninstall` and `--version` for the installers. These are only
 //! reachable from a command line, because Chromium never passes arbitrary arguments.
 
-use ppcore::protocol::{self, ApiError, ErrorCode};
-use ppcore::service::{Msg, Service, Timing};
-use ppcore::{install, log, nm, paths, secrets, store, xray};
+use ppcore::browser::protocol::{self, ApiError, ErrorCode};
+use ppcore::browser::adapter::{Adapter, Msg};
+use ppcore::core::api::{CoreMsg, Timing};
+use ppcore::browser::{install, nm};
+use ppcore::core::{secrets, store};
+use ppcore::log;
+use ppcore::platform::paths;
+use ppcore::runtime::xray;
 use std::io::{self, IsTerminal};
 use std::process::ExitCode;
 use std::sync::mpsc;
 use std::time::Duration;
 
 fn main() -> ExitCode {
-    ppcore::harden::harden_current_process();
+    ppcore::platform::harden::harden_current_process();
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some(origin) if origin.starts_with("chrome-extension://") => run_host(origin),
@@ -58,7 +63,7 @@ fn pause() {
 
 fn run_host(origin: &str) -> ExitCode {
     let data_dir = paths::data_dir();
-    if ppcore::harden::is_link(&data_dir) {
+    if ppcore::platform::harden::is_link(&data_dir) {
         // Checked before anything (including the log directory) is created inside it.
         eprintln!("data directory {} is a link or junction; refusing to use it", data_dir.display());
         return ExitCode::from(4);
@@ -127,13 +132,13 @@ fn run_host(origin: &str) -> ExitCode {
     let ttx = tx.clone();
     std::thread::spawn(move || loop {
         std::thread::sleep(Duration::from_millis(500));
-        if ttx.send(Msg::Tick).is_err() {
+        if ttx.send(Msg::Core(CoreMsg::Tick)).is_err() {
             break;
         }
     });
 
-    let svc = Service::new(store, xray::locate(), out_tx, tx, Timing::default());
-    svc.run_loop(rx); // returns after Shutdown, with Xray stopped
+    let adapter = Adapter::new(store, xray::locate(), out_tx, tx, Timing::default());
+    adapter.run_loop(rx); // returns after Shutdown, with Xray stopped
     let _ = writer.join();
     ExitCode::SUCCESS
 }

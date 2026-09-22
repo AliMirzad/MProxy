@@ -81,7 +81,7 @@ pub fn verify(xray: &Path) -> Result<std::fs::File, String> {
 /// A started Xray process, independent of platform.
 struct Proc {
     #[cfg(windows)]
-    inner: crate::winproc::ChildProc,
+    inner: crate::platform::winproc::ChildProc,
     #[cfg(not(windows))]
     inner: std::process::Child,
 }
@@ -91,22 +91,22 @@ impl Proc {
         let guard = verify(xray)?;
         let dir = xray.parent().unwrap_or(Path::new("."));
         #[cfg(windows)]
-        let r = crate::winproc::ChildProc::spawn(xray, args, dir, crate::winproc::Stdio { stdin, stdout: true, stderr: true })
+        let r = crate::platform::winproc::ChildProc::spawn(xray, args, dir, crate::platform::winproc::Stdio { stdin, stdout: true, stderr: true })
             .map(|inner| Proc { inner });
         #[cfg(not(windows))]
         let r = {
             use std::process::{Command, Stdio};
             #[cfg(target_os = "macos")]
             // MANDATORY: never run Xray outside the sandbox.
-            if let Err(e) = crate::macsandbox::usable(xray) {
+            if let Err(e) = crate::platform::macsandbox::usable(xray) {
                 drop(guard);
                 return Err(format!("runtime security check failed: the macOS sandbox is unavailable ({e})"));
             }
-            let mut c = match crate::macsandbox::usable(xray) {
+            let mut c = match crate::platform::macsandbox::usable(xray) {
                 Ok(()) => {
-                    let mut c = Command::new(crate::macsandbox::SANDBOX_EXEC);
+                    let mut c = Command::new(crate::platform::macsandbox::SANDBOX_EXEC);
                     // Canonical path: the profile allows exec of exactly this file.
-                    c.arg("-p").arg(crate::macsandbox::profile(xray, &crate::paths::home_dir())).arg(std::fs::canonicalize(xray).unwrap_or_else(|_| xray.to_path_buf()));
+                    c.arg("-p").arg(crate::platform::macsandbox::profile(xray, &crate::platform::paths::home_dir())).arg(std::fs::canonicalize(xray).unwrap_or_else(|_| xray.to_path_buf()));
                     c
                 }
                 Err(_) => unreachable!("checked above"),
@@ -248,9 +248,9 @@ impl Running {
     /// OS-reported isolation of the running process (Windows), for diagnostics and tests.
     pub fn isolation(&self) -> Option<serde_json::Value> {
         #[cfg(windows)]
-        return crate::winproc::isolation_of(self.pid).and_then(|i| serde_json::to_value(i).ok());
+        return crate::platform::winproc::isolation_of(self.pid).and_then(|i| serde_json::to_value(i).ok());
         #[cfg(target_os = "macos")]
-        return crate::macsandbox::state().map(|r| match r {
+        return crate::platform::macsandbox::state().map(|r| match r {
             Ok(()) => serde_json::json!({ "sandbox": true }),
             Err(e) => serde_json::json!({ "sandbox": false, "reason": e }),
         });
@@ -380,7 +380,7 @@ mod unix {
         for e in rd.flatten() {
             let name = e.file_name().to_string_lossy().into_owned();
             let Some(helper) = name.strip_prefix("xray-").and_then(|s| s.strip_suffix(".pid")).and_then(|s| s.parse::<i32>().ok()) else { continue };
-            if crate::harden::is_link(&e.path()) {
+            if crate::platform::harden::is_link(&e.path()) {
                 let _ = std::fs::remove_file(e.path());
                 continue;
             }

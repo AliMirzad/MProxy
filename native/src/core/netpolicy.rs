@@ -107,8 +107,8 @@ pub fn check_server_address(host: &str) -> Result<(), String> {
     match classify_host(host) {
         Class::Public | Class::Private => Ok(()),
         Class::Loopback if loopback_allowed_for_tests() => Ok(()),
-        Class::Loopback => Err(format!("Server address \"{}\" points to this computer (loopback); refusing", crate::validate::truncate(host, 64))),
-        Class::Forbidden(why) => Err(format!("Server address \"{}\" is not allowed: {why}", crate::validate::truncate(host, 64))),
+        Class::Loopback => Err(format!("Server address \"{}\" points to this computer (loopback); refusing", crate::core::validate::truncate(host, 64))),
+        Class::Forbidden(why) => Err(format!("Server address \"{}\" is not allowed: {why}", crate::core::validate::truncate(host, 64))),
     }
 }
 

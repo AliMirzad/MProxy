@@ -107,9 +107,9 @@ fn command_injection_strings_stay_inert_data() {
     let enc: String = percent_encoding::utf8_percent_encode(name, percent_encoding::NON_ALPHANUMERIC).to_string();
     let p = parse_vless_uri(&format!("vless://{UUID}@srv.example.com:443?security=tls&sni=srv.example.com#{enc}")).unwrap();
     assert_eq!(p.meta.name, name);
-    let cfg = crate::xrayconf::tunnel_config(&p.meta, &p.secrets, &crate::xrayconf::RuntimePlan {
+    let cfg = crate::core::xray_config::tunnel_config(&p.meta, &p.secrets, &crate::core::xray_config::RuntimePlan {
         browser_port: Some(1080),
-        jetbrains: crate::xrayconf::JetbrainsPorts { socks: None, http: None },
+        jetbrains: crate::core::xray_config::JetbrainsPorts { socks: None, http: None },
         ide_auth: None,
         browser_auth: None,
         log_level: "warning",
@@ -192,11 +192,11 @@ fn generated_config_contains_only_allowlisted_capabilities() {
     ];
     for l in links {
         let p = parse_vless_uri(&l).unwrap();
-        let cfg = crate::xrayconf::tunnel_config(&p.meta, &p.secrets, &crate::xrayconf::RuntimePlan {
+        let cfg = crate::core::xray_config::tunnel_config(&p.meta, &p.secrets, &crate::core::xray_config::RuntimePlan {
             browser_port: Some(1080),
-            jetbrains: crate::xrayconf::JetbrainsPorts { socks: Some(10808), http: Some(10809) },
-            ide_auth: Some(crate::xrayconf::IdeAuth { user: "u".into(), pass: "p".into() }),
-            browser_auth: Some(crate::xrayconf::IdeAuth { user: "b".into(), pass: "q".into() }),
+            jetbrains: crate::core::xray_config::JetbrainsPorts { socks: Some(10808), http: Some(10809) },
+            ide_auth: Some(crate::core::credentials::ProxyCredentials { user: "u".into(), pass: "p".into() }),
+            browser_auth: Some(crate::core::credentials::ProxyCredentials { user: "b".into(), pass: "q".into() }),
             log_level: "warning",
         });
         let s = cfg.to_string();

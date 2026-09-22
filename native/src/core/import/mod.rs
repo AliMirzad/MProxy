@@ -18,7 +18,7 @@ pub use json::parse_xray_json;
 pub use vless::parse_vless_uri;
 pub use vmess::parse_vmess_uri;
 
-use crate::model::ParsedServer;
+use crate::core::profile::ParsedServer;
 use base64::Engine;
 
 pub const MAX_INPUT_BYTES: usize = 5 * 1024 * 1024;

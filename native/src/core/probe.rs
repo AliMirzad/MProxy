@@ -53,7 +53,7 @@ impl std::fmt::Display for ProbeError {
 
 /// Performs one HTTP request through the local authenticated HTTP proxy inbound (exactly the
 /// path the browser uses: the hostname goes to the proxy unresolved) and returns the status line.
-pub fn probe_once(port: u16, auth: &crate::xrayconf::IdeAuth, t: &Target, timeout: Duration) -> Result<String, ProbeError> {
+pub fn probe_once(port: u16, auth: &crate::core::credentials::ProxyCredentials, t: &Target, timeout: Duration) -> Result<String, ProbeError> {
     use base64::Engine;
     let deadline = Instant::now() + timeout;
     let remaining = || deadline.saturating_duration_since(Instant::now()).max(Duration::from_millis(1));
@@ -70,7 +70,7 @@ pub fn probe_once(port: u16, auth: &crate::xrayconf::IdeAuth, t: &Target, timeou
         h = t.host,
         p = t.port,
         path = t.path,
-        ua = crate::subscription::USER_AGENT
+        ua = crate::core::subscription::USER_AGENT
     );
     s.write_all(req.as_bytes()).map_err(io)?;
     let mut line = Vec::new();
@@ -93,7 +93,7 @@ pub fn probe_once(port: u16, auth: &crate::xrayconf::IdeAuth, t: &Target, timeou
     }
 }
 
-pub fn probe(port: u16, auth: &crate::xrayconf::IdeAuth, targets: &[Target], per_target: Duration, cancelled: &dyn Fn() -> bool) -> Result<String, ProbeError> {
+pub fn probe(port: u16, auth: &crate::core::credentials::ProxyCredentials, targets: &[Target], per_target: Duration, cancelled: &dyn Fn() -> bool) -> Result<String, ProbeError> {
     let mut last = ProbeError::Remote("no probe targets".into());
     for t in targets {
         if cancelled() {

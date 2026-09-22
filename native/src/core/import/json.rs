@@ -15,8 +15,8 @@
 use super::fields::{self, check};
 use super::stream::{self, StreamParams};
 use super::{EntryError, ParseBatch, MAX_ENTRIES};
-use crate::model::*;
-use crate::validate as v;
+use crate::core::profile::*;
+use crate::core::validate as v;
 use serde_json::{Map, Value};
 
 type Obj = Map<String, Value>;

@@ -53,7 +53,7 @@ pub fn check(obj: &Map<String, Value>, ctx: &str, table: Table, warnings: &mut V
 }
 
 pub fn check_one(k: &str, v: &Value, ctx: &str, table: Table, warnings: &mut Vec<String>) -> Result<(), String> {
-    let name = || format!("{ctx}.{}", crate::validate::truncate(k, 40));
+    let name = || format!("{ctx}.{}", crate::core::validate::truncate(k, 40));
     match lookup(table, k) {
         Some(Used) | Some(Silent) => Ok(()),
         Some(Ignored) => {
@@ -243,7 +243,7 @@ pub const RAW_HEADER: Table = &[("type", Used), ("request", Used), ("response", 
 pub const RAW_REQUEST: Table = &[("path", Used), ("headers", Used), ("version", Ignored), ("method", Ignored)];
 
 /// XHTTP tuning keys, allowed in `xhttpSettings` and in its `extra` object. Scalars only; each is
-/// validated by [`crate::validate::sanitize_xhttp_extra`].
+/// validated by [`crate::core::validate::sanitize_xhttp_extra`].
 pub const XHTTP_SCALARS: &[&str] = &[
     "xPaddingBytes",
     "xPaddingObfsMode",

@@ -7,7 +7,8 @@
 //!   destination hostnames locally; the remote server resolves them (see docs/architecture.md#dns);
 //! * no file paths, sockopt, API, or other fields that reach outside the proxy data path.
 
-use crate::model::*;
+use crate::core::credentials::ProxyCredentials;
+use crate::core::profile::*;
 use serde_json::{json, Map, Value};
 
 pub const LOOPBACK: &str = "127.0.0.1";
@@ -32,27 +33,20 @@ pub struct JetbrainsPorts {
     pub http: Option<u16>,
 }
 
-/// Credentials required on the IDE inbounds.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct IdeAuth {
-    pub user: String,
-    pub pass: String,
-}
-
 #[derive(Debug, Clone)]
 pub struct RuntimePlan {
     /// Browser-facing HTTP proxy inbound; `None` in passthrough mode. It requires
     /// `browser_auth` (per-connection random credentials that the extension answers proxy
     /// challenges with), so other local processes and users cannot use the tunnel.
     pub browser_port: Option<u16>,
-    pub browser_auth: Option<IdeAuth>,
+    pub browser_auth: Option<ProxyCredentials>,
     pub jetbrains: JetbrainsPorts,
     /// `Some`: the IDE HTTP and SOCKS inbounds require these credentials.
-    pub ide_auth: Option<IdeAuth>,
+    pub ide_auth: Option<ProxyCredentials>,
     pub log_level: &'static str,
 }
 
-fn socks_inbound(tag: &str, port: u16, auth: Option<&IdeAuth>) -> Value {
+fn socks_inbound(tag: &str, port: u16, auth: Option<&ProxyCredentials>) -> Value {
     let settings = match auth {
         Some(a) => json!({ "auth": "password", "accounts": [{ "user": a.user, "pass": a.pass }], "udp": false }),
         None => json!({ "auth": "noauth", "udp": false }),
@@ -60,7 +54,7 @@ fn socks_inbound(tag: &str, port: u16, auth: Option<&IdeAuth>) -> Value {
     json!({ "tag": tag, "listen": LOOPBACK, "port": port, "protocol": "socks", "settings": settings })
 }
 
-fn http_inbound(tag: &str, port: u16, auth: Option<&IdeAuth>) -> Value {
+fn http_inbound(tag: &str, port: u16, auth: Option<&ProxyCredentials>) -> Value {
     let settings = match auth {
         Some(a) => json!({ "accounts": [{ "user": a.user, "pass": a.pass }], "allowTransparent": false }),
         None => json!({ "allowTransparent": false }),
@@ -250,14 +244,14 @@ fn stream_settings(meta: &ServerMeta, secrets: &ServerSecrets) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parse::parse_link;
+    use crate::core::import::parse_link;
 
     fn plan() -> RuntimePlan {
         RuntimePlan {
             browser_port: Some(50000),
             jetbrains: JetbrainsPorts { socks: Some(10808), http: Some(10809) },
             ide_auth: None,
-            browser_auth: Some(IdeAuth { user: "b".into(), pass: "p".into() }),
+            browser_auth: Some(ProxyCredentials { user: "b".into(), pass: "p".into() }),
             log_level: "warning",
         }
     }

@@ -149,7 +149,25 @@ pub enum Source {
     Subscription,
 }
 
-/// Non-sensitive server description. Safe to persist in plaintext and to summarise in the UI.
+/// Where a profile came from (provenance), as clients and future policy see it.
+///
+/// A `Managed` source (profiles delivered by a company policy) is a planned addition for the
+/// corporate mode (docs/managed-deployment.md); it is not represented until something produces it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProfileSource {
+    /// Imported by the user (link, QR, JSON, file).
+    Manual,
+    /// Delivered by the subscription with this id; replaced or removed by its refreshes.
+    Subscription(String),
+}
+
+/// The connection profile's non-sensitive part ("ConnectionProfile" in docs/core-api.md):
+/// id, display name, protocol, endpoint, transport, security and provenance. Safe to persist in
+/// plaintext and to summarise in a UI. The credential material lives in [`ServerSecrets`],
+/// stored encrypted and referenced by the same `id`.
+///
+/// Every field was produced by the strict import pipeline; `name` is sanitized there
+/// (`validate::clean_name`: no control, bidi or zero-width characters).
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct ServerMeta {
     pub id: String,
@@ -170,6 +188,15 @@ pub struct ServerMeta {
     pub subscription_id: Option<String>,
     #[serde(default)]
     pub created_at: u64,
+}
+
+impl ServerMeta {
+    pub fn source(&self) -> ProfileSource {
+        match &self.subscription_id {
+            Some(id) => ProfileSource::Subscription(id.clone()),
+            None => ProfileSource::Manual,
+        }
+    }
 }
 
 /// Credentials and key material. Only ever persisted inside the encrypted secrets file.

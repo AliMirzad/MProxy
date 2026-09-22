@@ -6,8 +6,8 @@
 //!
 //! Every operation re-reads from disk under the lock and writes atomically (temp + rename).
 
-use crate::model::*;
-use crate::secrets::{self, KeyProvider, SecretError};
+use crate::core::profile::*;
+use crate::core::secrets::{self, KeyProvider, SecretError};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
@@ -141,17 +141,17 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
         f.write_all(bytes)?;
         f.sync_all()?;
     }
-    crate::paths::harden_file(&tmp);
+    crate::platform::paths::harden_file(&tmp);
     fs::rename(&tmp, path)
 }
 
 impl Store {
     pub fn open(dir: PathBuf, keys: Box<dyn KeyProvider>) -> Result<Store, StoreError> {
-        if crate::harden::is_link(&dir) {
+        if crate::platform::harden::is_link(&dir) {
             return Err(StoreError::Io(format!("{} is a link or junction; refusing to store credentials there", dir.display())));
         }
         fs::create_dir_all(&dir)?;
-        crate::paths::harden_dir(&dir);
+        crate::platform::paths::harden_dir(&dir);
         Ok(Store { dir, keys })
     }
 
@@ -390,8 +390,8 @@ pub fn merge(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parse::parse_link;
-    use crate::secrets::FileKeyProvider;
+    use crate::core::import::parse_link;
+    use crate::core::secrets::FileKeyProvider;
 
     fn store() -> (tempfile::TempDir, Store) {
         let d = tempfile::tempdir().unwrap();
@@ -470,7 +470,7 @@ mod tests {
     }
 
     fn parsed(link: &str) -> ParsedServer {
-        crate::parse::parse_link(link).unwrap()
+        crate::core::import::parse_link(link).unwrap()
     }
 
     #[test]

@@ -59,7 +59,7 @@ fn self_test(xray: &Path) -> Result<(), String> {
     }
     let out = std::process::Command::new(SANDBOX_EXEC)
         .arg("-p")
-        .arg(profile(xray, &crate::paths::home_dir()))
+        .arg(profile(xray, &crate::platform::paths::home_dir()))
         .arg(canonical(xray))
         .arg("version")
         .env_clear()

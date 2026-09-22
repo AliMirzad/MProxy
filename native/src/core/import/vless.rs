@@ -3,8 +3,8 @@
 //! `vless://<uuid>@<host>:<port>?type=..&security=..&...#<name>`
 
 use super::stream::{self, StreamParams};
-use crate::model::*;
-use crate::validate as v;
+use crate::core::profile::*;
+use crate::core::validate as v;
 use percent_encoding::percent_decode_str;
 use std::collections::HashMap;
 

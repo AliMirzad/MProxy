@@ -1,8 +1,8 @@
 //! Shared construction of transport + security from share-link style parameters.
 //! Used by both the VLESS URI parser and the VMess JSON-link parser.
 
-use crate::model::{RawHeader, Security, Transport};
-use crate::validate as v;
+use crate::core::profile::{RawHeader, Security, Transport};
+use crate::core::validate as v;
 
 #[derive(Default, Debug, Clone)]
 pub struct StreamParams {

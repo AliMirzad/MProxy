@@ -35,7 +35,7 @@ use windows_sys::Win32::System::JobObjects::*;
 use windows_sys::Win32::System::Pipes::CreatePipe;
 use windows_sys::Win32::System::Threading::*;
 
-use crate::harden::win::wide;
+use crate::platform::harden::win::wide;
 
 const PROC_THREAD_ATTRIBUTE_HANDLE_LIST_: usize = 0x0002_0002;
 const PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY_: usize = 0x0002_0007;

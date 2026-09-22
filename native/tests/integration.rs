@@ -844,7 +844,7 @@ fn xray_isolation_and_listeners() {
 
     #[cfg(windows)]
     {
-        use ppcore::winproc::{ChildProc, Restrictions, Stdio as PStdio};
+        use ppcore::platform::winproc::{ChildProc, Restrictions, Stdio as PStdio};
         // The OS reports Xray at Low integrity with the creation-time policies in force.
         let iso = &d["xrayIsolation"];
         assert_eq!(iso["integrity"], "low", "{d}");
@@ -1332,7 +1332,7 @@ fn ports_ready(port: u16) -> bool {
 #[cfg(windows)]
 #[test]
 fn xray_sandbox_probe() {
-    use ppcore::winproc::{ChildProc, Restrictions, Stdio as PStdio};
+    use ppcore::platform::winproc::{ChildProc, Restrictions, Stdio as PStdio};
     use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
     use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
     use windows_sys::Win32::System::Threading::CreateEventW;
@@ -1348,7 +1348,7 @@ fn xray_sandbox_probe() {
     let doc = home.join(format!("pp-probe-document-{tag}.txt"));
     std::fs::write(&doc, b"confidential").unwrap();
     let data = tempfile::tempdir().unwrap();
-    ppcore::harden::restrict_dir(data.path()).unwrap();
+    ppcore::platform::harden::restrict_dir(data.path()).unwrap();
     let secret = data.path().join("secrets.bin");
     std::fs::write(&secret, b"secret").unwrap();
     let tmp_file = std::env::temp_dir().join(format!("pp-probe-temp-{tag}.txt"));

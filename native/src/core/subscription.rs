@@ -16,7 +16,7 @@ use std::net::{SocketAddr, ToSocketAddrs};
 use std::sync::Arc;
 use std::time::Duration;
 
-pub const MAX_BODY: u64 = crate::parse::MAX_INPUT_BYTES as u64;
+pub const MAX_BODY: u64 = crate::core::import::MAX_INPUT_BYTES as u64;
 pub const USER_AGENT: &str = concat!("PrivateProxy/", env!("CARGO_PKG_VERSION"));
 
 /// Where a subscription may be fetched from.
@@ -27,7 +27,7 @@ pub struct Policy {
 }
 
 fn is_loopback_host(u: &url::Url) -> bool {
-    matches!(crate::netpolicy::classify_host(u.host_str().unwrap_or("")), crate::netpolicy::Class::Loopback)
+    matches!(crate::core::netpolicy::classify_host(u.host_str().unwrap_or("")), crate::core::netpolicy::Class::Loopback)
 }
 
 /// Plain HTTP only to loopback test servers, only in debug test mode.
@@ -43,7 +43,7 @@ fn check_target(u: &url::Url, policy: &Policy) -> Result<(), String> {
         _ => return Err("Subscription URL must start with https://".into()),
     }
     let host = u.host_str().filter(|h| !h.is_empty()).ok_or("Subscription URL has no host")?;
-    crate::netpolicy::check_subscription_host(host, policy.allow_private)
+    crate::core::netpolicy::check_subscription_host(host, policy.allow_private)
 }
 
 /// Validates a subscription URL and returns it normalized.
@@ -81,7 +81,7 @@ fn check_resolved(addrs: &[SocketAddr], policy: &Policy) -> Result<(), Box<dyn s
         return Err("Subscription host did not resolve".into());
     }
     for a in addrs {
-        crate::netpolicy::check_subscription_ip(a.ip(), policy.allow_private)?;
+        crate::core::netpolicy::check_subscription_ip(a.ip(), policy.allow_private)?;
     }
     Ok(())
 }
@@ -93,7 +93,7 @@ pub fn display_host(u: &url::Url) -> String {
 /// The local tunnel inbound to fetch through: port and its per-connection credentials.
 pub struct Via {
     pub port: u16,
-    pub auth: crate::xrayconf::IdeAuth,
+    pub auth: crate::core::credentials::ProxyCredentials,
 }
 
 pub fn fetch(raw_url: &str, via: Option<&Via>, policy: &Policy) -> Result<String, String> {

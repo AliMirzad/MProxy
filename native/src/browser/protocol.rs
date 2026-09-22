@@ -174,7 +174,7 @@ pub fn decode(bytes: &[u8]) -> (u32, Result<Request, ApiError>) {
         Ok(r) => (id, Ok(r)),
         Err(e) => {
             let msg = e.to_string();
-            let msg = if msg.contains("unknown variant") { format!("Unknown command \"{}\"", crate::validate::truncate(cmd, 32)) } else { format!("Invalid arguments for {cmd}: {}", crate::validate::truncate(&msg, 120)) };
+            let msg = if msg.contains("unknown variant") { format!("Unknown command \"{}\"", crate::core::validate::truncate(cmd, 32)) } else { format!("Invalid arguments for {cmd}: {}", crate::core::validate::truncate(&msg, 120)) };
             (id, Err(bad(&msg)))
         }
     }

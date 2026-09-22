@@ -24,15 +24,15 @@ static LOGGER: Mutex<Option<Logger>> = Mutex::new(None);
 
 pub fn init(dir: &Path, debug: bool) {
     // Never create or write logs through a link/junction (it could redirect writes elsewhere).
-    if dir.ancestors().take(2).any(crate::harden::is_link) {
+    if dir.ancestors().take(2).any(crate::platform::harden::is_link) {
         *LOGGER.lock().unwrap_or_else(|e| e.into_inner()) = Some(Logger { path: dir.join("helper.log"), file: None, debug });
         return;
     }
     let _ = fs::create_dir_all(dir);
-    crate::paths::harden_dir(dir);
+    crate::platform::paths::harden_dir(dir);
     let path = dir.join("helper.log");
-    let file = if crate::harden::is_link(&path) { None } else { OpenOptions::new().create(true).append(true).open(&path).ok() };
-    crate::paths::harden_file(&path);
+    let file = if crate::platform::harden::is_link(&path) { None } else { OpenOptions::new().create(true).append(true).open(&path).ok() };
+    crate::platform::paths::harden_file(&path);
     *LOGGER.lock().unwrap_or_else(|e| e.into_inner()) = Some(Logger { path, file, debug });
 }
 
@@ -57,7 +57,7 @@ fn rotate(l: &mut Logger) {
     }
     let _ = fs::rename(&l.path, l.path.with_extension("log.1"));
     l.file = OpenOptions::new().create(true).append(true).open(&l.path).ok();
-    crate::paths::harden_file(&l.path);
+    crate::platform::paths::harden_file(&l.path);
 }
 
 fn write(level: &str, msg: &str) {

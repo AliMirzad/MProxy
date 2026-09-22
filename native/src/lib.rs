@@ -1,31 +1,25 @@
-//! Core library of the Private Proxy native helper.
+//! MProxy shared core and its first client, the browser native-messaging host.
 //!
-//! The binary (`main.rs`) is a thin shell around this library so that parsing,
-//! config generation, storage and the connection state machine can be unit- and
-//! integration-tested without a browser.
+//! Layers (dependencies point downwards only; enforced by `tests/architecture.rs`):
+//!
+//! ```text
+//!   browser   Native Messaging adapter: wire protocol, framing, installer. A client of `core`.
+//!     │
+//!   core      Shared Core: profiles, imports, subscriptions, trusted Xray config, sessions,
+//!     │       secrets, policy. No browser, JSON-protocol or UI knowledge.
+//!   runtime   Xray runtime boundary: integrity, pre-run verification, restricted launch,
+//!     │       supervision, ports.
+//!   platform  OS security primitives: Windows restricted token/job, macOS sandbox, ACLs, paths.
+//! ```
+//!
+//! `log` is shared infrastructure usable by every layer. A future desktop client would be a
+//! second adapter next to `browser` (see docs/future-desktop-architecture.md).
 
-pub mod harden;
-pub mod install;
+pub mod browser;
+pub mod core;
 pub mod log;
-#[cfg(any(target_os = "macos", test))]
-pub mod macsandbox;
-pub mod model;
-pub mod netpolicy;
-pub mod nm;
-pub mod parse;
-pub mod paths;
-pub mod ports;
-pub mod probe;
-pub mod protocol;
-pub mod secrets;
-pub mod service;
-pub mod store;
-pub mod subscription;
-pub mod validate;
-pub mod xray;
-pub mod xrayconf;
-#[cfg(windows)]
-pub mod winproc;
+pub mod platform;
+pub mod runtime;
 
 /// Development/test overrides (`PRIVATE_PROXY_*` environment variables).
 ///

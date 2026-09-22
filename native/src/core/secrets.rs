@@ -71,7 +71,7 @@ fn normalized(p: &std::path::Path) -> String {
 /// Credential-store account name for the key that protects `data_dir`.
 pub fn account_for(data_dir: &std::path::Path) -> String {
     use sha2::{Digest, Sha256};
-    let default = crate::paths::default_data_dir();
+    let default = crate::platform::paths::default_data_dir();
     if normalized(data_dir) == normalized(&default) {
         return ACCOUNT.to_string();
     }
@@ -128,7 +128,7 @@ impl KeyProvider for FileKeyProvider {
     fn store(&self, key: &[u8; 32]) -> Result<(), SecretError> {
         std::fs::write(&self.path, base64::engine::general_purpose::STANDARD.encode(key))
             .map_err(|e| SecretError::Unavailable(e.to_string()))?;
-        crate::paths::harden_file(&self.path);
+        crate::platform::paths::harden_file(&self.path);
         Ok(())
     }
     fn delete(&self) -> Result<(), SecretError> {
@@ -185,7 +185,7 @@ mod tests {
     #[test]
     fn each_data_dir_has_its_own_credential_entry() {
         // The product's real data directory keeps the historical account name…
-        assert_eq!(account_for(&crate::paths::default_data_dir()), ACCOUNT);
+        assert_eq!(account_for(&crate::platform::paths::default_data_dir()), ACCOUNT);
         // …while any other directory (tests, a second install) gets its own, so purging a test
         // runtime can never delete or replace the key protecting the user's servers.
         let t = tempfile::tempdir().unwrap();

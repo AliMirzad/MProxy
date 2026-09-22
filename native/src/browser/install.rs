@@ -7,7 +7,8 @@
 //!   manifest path). Brave is registered under both its own key and Chrome's.
 //! * macOS: `~/Library/Application Support/<browser>/NativeMessagingHosts/com.privateproxy.host.json`.
 
-use crate::{paths, HOST_NAME};
+use crate::platform::paths;
+use crate::HOST_NAME;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -102,7 +103,7 @@ fn cleanup_old(dir: &Path) {
 }
 
 fn find_xray(source_dir: &Path) -> Option<PathBuf> {
-    let exe = crate::xray::exe_name();
+    let exe = crate::runtime::xray::exe_name();
     [source_dir.join("xray").join(exe), source_dir.join(exe)].into_iter().find(|p| p.is_file())
 }
 
@@ -110,7 +111,7 @@ pub fn install(o: &InstallOptions) -> Result<Vec<String>, String> {
     if o.extension_ids.is_empty() || !o.extension_ids.iter().all(|i| valid_extension_id(i)) {
         return Err("invalid extension id".into());
     }
-    if crate::harden::is_link(&o.target_dir) {
+    if crate::platform::harden::is_link(&o.target_dir) {
         return Err(format!("{} is a link or junction; refusing to install there", o.target_dir.display()));
     }
     let mut log = Vec::new();
@@ -129,12 +130,12 @@ pub fn install(o: &InstallOptions) -> Result<Vec<String>, String> {
     }
     let xray_src = find_xray(&o.source_dir).ok_or_else(|| format!("Xray binary not found next to the installer in {}", o.source_dir.display()))?;
     // Refuse to install anything but the pinned Xray build.
-    drop(crate::xray::verify(&xray_src).map_err(|e| format!("{}: {e}", xray_src.display()))?);
+    drop(crate::runtime::xray::verify(&xray_src).map_err(|e| format!("{}: {e}", xray_src.display()))?);
     let xray_dir = o.target_dir.join("xray");
     fs::create_dir_all(&xray_dir).map_err(|e| format!("cannot create {}: {e}", xray_dir.display()))?;
     // Only this user (and SYSTEM/Administrators) may modify the executables, whatever the
     // permissions of the chosen parent directory.
-    if let Err(e) = crate::harden::restrict_install_dir(&o.target_dir) {
+    if let Err(e) = crate::platform::harden::restrict_install_dir(&o.target_dir) {
         log.push(format!("warning: could not restrict permissions of {}: {e}", o.target_dir.display()));
     }
     cleanup_old(&o.target_dir);
@@ -143,7 +144,7 @@ pub fn install(o: &InstallOptions) -> Result<Vec<String>, String> {
     let me = std::env::current_exe().map_err(|e| e.to_string())?;
     let host_dst = o.target_dir.join(host_exe_name());
     replace_file(&me, &host_dst)?;
-    let xray_dst = xray_dir.join(crate::xray::exe_name());
+    let xray_dst = xray_dir.join(crate::runtime::xray::exe_name());
     replace_file(&xray_src, &xray_dst)?;
     if let Some(lic) = xray_src.parent().map(|p| p.join("LICENSE")).filter(|p| p.is_file()) {
         let _ = fs::copy(lic, xray_dir.join("LICENSE"));
@@ -180,10 +181,10 @@ pub fn uninstall(target_dir: &Path, purge: bool) -> Result<Vec<String>, String> 
     if purge {
         let data = paths::data_dir();
         // Only the key that protects *this* data directory (see secrets::KeyringProvider).
-        let _ = crate::secrets::default_provider(&data).delete();
+        let _ = crate::core::secrets::default_provider(&data).delete();
         // Only fixed product paths are deleted, and a link is removed itself, never followed.
         for d in [data.clone(), paths::log_dir()] {
-            if crate::harden::is_link(&d) {
+            if crate::platform::harden::is_link(&d) {
                 let _ = fs::remove_dir(&d).or_else(|_| fs::remove_file(&d));
             } else {
                 let _ = fs::remove_dir_all(&d);
