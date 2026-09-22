@@ -282,6 +282,33 @@ mod tests {
     }
 
     #[test]
+    fn generation_is_deterministic_and_every_listener_is_authenticated_on_loopback() {
+        let p = parse_link("vless://b831381d-6324-4d53-ad4f-8cda48b30811@h.example.com:443?security=tls&type=ws&path=%2Fws&sni=h.example.com#a").unwrap();
+        let mut pl = plan();
+        pl.ide_auth = Some(ProxyCredentials { user: "privateproxy".into(), pass: "idepass".into() });
+        let a = serde_json::to_vec(&tunnel_config(&p.meta, &p.secrets, &pl)).unwrap();
+        let b = serde_json::to_vec(&tunnel_config(&p.meta, &p.secrets, &pl)).unwrap();
+        assert_eq!(a, b, "same profile + plan must give byte-identical config");
+        let cfg: Value = serde_json::from_slice(&a).unwrap();
+        let inbounds = cfg["inbounds"].as_array().unwrap();
+        assert_eq!(inbounds.len(), 3, "browser + IDE HTTP + IDE SOCKS");
+        assert!(all_listen_loopback(&cfg));
+        for i in inbounds {
+            let s = &i["settings"];
+            let open = match i["protocol"].as_str() {
+                Some("http") => s["allowTransparent"] != false,
+                Some("socks") => s["auth"] != "password" || s["udp"] != false,
+                p => panic!("unexpected inbound protocol {p:?}"),
+            };
+            assert!(!open && s["accounts"].as_array().is_some_and(|a| a.len() == 1), "unauthenticated inbound: {i}");
+        }
+        // Only the generator's own sections: no API, stats, DNS, reverse or observatory.
+        for section in ["api", "stats", "dns", "reverse", "observatory", "policy"] {
+            assert!(cfg.get(section).is_none(), "{section}");
+        }
+    }
+
+    #[test]
     fn passthrough_has_only_direct() {
         let mut pl = plan();
         pl.browser_port = None;

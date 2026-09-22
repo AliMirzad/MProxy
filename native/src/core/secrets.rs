@@ -24,6 +24,11 @@ pub enum SecretError {
     Corrupt,
 }
 
+/// The secret-store boundary: get / set / delete of the one data key. Implementations:
+/// [`KeyringProvider`] (Windows Credential Manager, macOS Keychain) for every installed build, and
+/// [`FileKeyProvider`] for development/tests only. Everything else secret (server credentials,
+/// subscription URLs, the IDE password) is encrypted with this key in `secrets.bin`, so a future
+/// client or platform only has to provide this trait.
 pub trait KeyProvider: Send + Sync {
     /// Returns the data key, or `None` if no key exists yet.
     fn load(&self) -> Result<Option<[u8; 32]>, SecretError>;
