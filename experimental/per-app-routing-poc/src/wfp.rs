@@ -24,6 +24,18 @@ use windows_sys::Win32::Security::{GetSecurityDescriptorLength, PSECURITY_DESCRI
 
 const RPC_C_AUTHN_WINNT: u32 = 10;
 
+/// Diagnostic trace of every WFP call (file named by POC_WFP_TRACE), written and flushed before
+/// and after each call so a native crash still shows the last call reached.
+pub fn trace(msg: &str) {
+    if let Some(p) = std::env::var_os("POC_WFP_TRACE") {
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(p) {
+            let _ = writeln!(f, "  wfp: {msg}");
+            let _ = f.sync_all();
+        }
+    }
+}
+
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
@@ -67,6 +79,7 @@ impl WfpEnforcement {
         session.flags = FWPM_SESSION_FLAG_DYNAMIC;
         session.displayData.name = name.as_ptr() as *mut u16;
         let mut engine: HANDLE = std::ptr::null_mut();
+        trace("FwpmEngineOpen0 …");
         let rc = unsafe { FwpmEngineOpen0(std::ptr::null(), RPC_C_AUTHN_WINNT, std::ptr::null(), &session, &mut engine) };
         if rc != 0 {
             return Err(format!("FwpmEngineOpen0: {}", describe(rc)));
@@ -89,7 +102,9 @@ impl WfpEnforcement {
         sl.subLayerKey = self.sublayer;
         sl.displayData.name = name.as_ptr() as *mut u16;
         sl.weight = 0x8000;
+        trace("FwpmSubLayerAdd0 …");
         let rc = unsafe { FwpmSubLayerAdd0(self.engine, &sl, std::ptr::null_mut()) };
+        trace(&format!("FwpmSubLayerAdd0 = {rc:#x}"));
         if rc != 0 {
             return Err(format!("FwpmSubLayerAdd0: {}", describe(rc)));
         }
@@ -108,7 +123,9 @@ impl WfpEnforcement {
         f.filterCondition = conds.as_mut_ptr();
         f.action.r#type = action;
         let mut id = 0u64;
+        trace(&format!("FwpmFilterAdd0 action={action:#x} conditions={} …", conds.len()));
         let rc = unsafe { FwpmFilterAdd0(self.engine, &f, std::ptr::null_mut(), &mut id) };
+        trace(&format!("FwpmFilterAdd0 = {rc:#x} id={id}"));
         if rc != 0 {
             return Err(format!("FwpmFilterAdd0: {}", describe(rc)));
         }
@@ -149,7 +166,9 @@ impl ApplicationRoutingProvider for WfpEnforcement {
                 let dos = path.strip_prefix(r"\\?\").unwrap_or(&path).to_string();
                 let w = wide(&dos);
                 let mut blob: *mut FWP_BYTE_BLOB = std::ptr::null_mut();
+                trace(&format!("FwpmGetAppIdFromFileName0({dos}) …"));
                 let rc = unsafe { FwpmGetAppIdFromFileName0(w.as_ptr(), &mut blob) };
+                trace(&format!("FwpmGetAppIdFromFileName0 = {rc:#x}"));
                 if rc != 0 {
                     return Err(format!("FwpmGetAppIdFromFileName0({dos}): {}", describe(rc)));
                 }
@@ -207,9 +226,11 @@ impl ApplicationRoutingProvider for WfpEnforcement {
 
     fn deactivate(&mut self) -> Result<(), String> {
         for id in std::mem::take(&mut self.filters) {
-            unsafe { FwpmFilterDeleteById0(self.engine, id) };
+            let rc = unsafe { FwpmFilterDeleteById0(self.engine, id) };
+            trace(&format!("FwpmFilterDeleteById0({id}) = {rc:#x}"));
         }
-        unsafe { FwpmSubLayerDeleteByKey0(self.engine, &self.sublayer) };
+        let rc = unsafe { FwpmSubLayerDeleteByKey0(self.engine, &self.sublayer) };
+        trace(&format!("FwpmSubLayerDeleteByKey0 = {rc:#x}"));
         self.state = RoutingState::Inactive;
         Ok(())
     }
@@ -217,15 +238,18 @@ impl ApplicationRoutingProvider for WfpEnforcement {
 
 impl Drop for WfpEnforcement {
     fn drop(&mut self) {
+        trace("drop: begin");
         let _ = self.deactivate();
         for b in self.app_ids.drain(..) {
             let mut p = b as *mut core::ffi::c_void;
+            trace("FwpmFreeMemory0(app id) …");
             unsafe { FwpmFreeMemory0(&mut p) };
         }
-        unsafe {
-            // Closing a dynamic session deletes anything left.
-            FwpmEngineClose0(self.engine);
-            LocalFree(self.user_sd as _);
-        }
+        trace("FwpmEngineClose0 …");
+        // Closing a dynamic session deletes anything left.
+        let rc = unsafe { FwpmEngineClose0(self.engine) };
+        trace(&format!("FwpmEngineClose0 = {rc:#x}; LocalFree(sd) …"));
+        unsafe { LocalFree(self.user_sd as _) };
+        trace("drop: end");
     }
 }

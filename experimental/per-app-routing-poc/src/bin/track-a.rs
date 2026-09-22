@@ -109,6 +109,7 @@ fn main() {
     if let Some(p) = &report_path {
         let lp = p.with_extension("log");
         let _ = std::fs::remove_file(&lp);
+        std::env::set_var("POC_WFP_TRACE", &lp);
         let _ = LOG.set(lp);
     }
     std::panic::set_hook(Box::new(|info| {
@@ -270,13 +271,18 @@ fn main() {
     // ---- T14 include_children=true, prototype = explicit allowlist of the child's executable
     #[cfg(windows)]
     let st14 = if enforced {
+        log("step: T14 drop first WFP session");
         drop(wfp.take_ok());
+        log("step: T14 open session for [client, control]");
         let w2 = enforce(&[&client, &control]);
+        log(&format!("step: T14 session ok = {}", w2.is_ok()));
         let h = tcp_hits();
         let other = plain(&client, &["exec", &control.display().to_string(), "tcp", &lan_tcp_s]);
         std::thread::sleep(Duration::from_millis(200));
         let ok = os(&other["child"]) == Some(BLOCKED) && tcp_hits() == h;
+        log("step: T14 drop two-target session");
         drop(w2);
+        log("step: T14 re-open single-target session");
         wfp = enforce(&[&client]);
         (json!({"otherExeChild": other}), if ok { "PASS: RUNTIME VERIFIED (only by listing the child's executable explicitly)" } else { "FAIL" })
     } else {
