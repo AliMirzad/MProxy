@@ -84,6 +84,13 @@ fn start_target() -> Target {
                 }
                 *h.lock().unwrap() += 1;
                 let _ = s.write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n");
+                // Graceful close. Dropping a Windows socket that still has unread request bytes
+                // sends RST instead of FIN, which can discard the 204 in flight: the proxy chain
+                // then answers 503 and the connect probe fails. That was the intermittent
+                // "SERVER_UNREACHABLE" in the tunnel tests (docs/phase6-security-preservation.md).
+                let _ = s.shutdown(std::net::Shutdown::Write);
+                let _ = s.set_read_timeout(Some(Duration::from_secs(2)));
+                while matches!(s.read(&mut buf), Ok(n) if n > 0) {}
             });
         }
     });
@@ -155,8 +162,10 @@ fn start_server(xray: &Path, k: &Keys) -> ServerXray {
     let vmess = |port: u16, stream: Value| json!({"listen":"127.0.0.1","port":port,"protocol":"vmess","settings":{"clients":[{"id":TEST_UUID}]},"streamSettings":stream});
     let crt = k.cert_dir.join("srv.crt").display().to_string();
     let key = k.cert_dir.join("srv.key").display().to_string();
+    let server_log = std::env::var_os("PP_TEST_SERVER_LOG").map(PathBuf::from);
     let cfg = json!({
-        "log": {"loglevel": "warning"},
+        // PP_TEST_SERVER_LOG=<dir>: diagnostics only (flaky-test investigation); off by default.
+        "log": {"loglevel": if server_log.is_some() { "info" } else { "warning" }},
         "dns": {"hosts": {"probe.test": "127.0.0.1"}},
         "inbounds": [
             vless(p.raw, json!({"network":"raw"})),
@@ -182,7 +191,7 @@ fn start_server(xray: &Path, k: &Keys) -> ServerXray {
     let mut child = Command::new(xray)
         .args(["run", "-c", "stdin:", "-format", "json"])
         .stdin(Stdio::piped())
-        .stdout(Stdio::null())
+        .stdout(match &server_log { Some(d) => Stdio::from(std::fs::File::create(d.join(format!("server-{}.log", p.ws))).unwrap()), None => Stdio::null() })
         .stderr(Stdio::null())
         .spawn()
         .unwrap();
@@ -320,9 +329,16 @@ impl Host {
         self.events.clear();
         self.ok("connect", json!({"serverId": server_id}));
         let sid = server_id.to_string();
-        self.wait_status("connected or error", Duration::from_secs(30), move |s| {
+        let st = self.wait_status("connected or error", Duration::from_secs(30), move |s| {
             s["serverId"] == sid.as_str() && (s["state"] == "connected" || s["state"] == "error")
-        })
+        });
+        if st["state"] != "connected" {
+            // The user-facing message is deliberately short; the reason is in the helper log.
+            let log = self.log();
+            let tail: Vec<&str> = log.lines().rev().take(12).collect();
+            eprintln!("connect did not succeed; helper log tail (newest first):\n  {}", tail.join("\n  "));
+        }
+        st
     }
 
     fn log(&self) -> String {

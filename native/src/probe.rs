@@ -18,11 +18,13 @@ pub struct Target {
 /// Default probe targets: well-known "connectivity check" endpoints that return 204.
 pub fn default_targets() -> Vec<Target> {
     if let Some(v) = crate::test_hook("PRIVATE_PROXY_PROBE_URL").and_then(|v| v.into_string().ok()) {
-        // Test hook: "host:port/path".
+        // Test hook: "host:port/path". Listed twice so tests get the same number of attempts as the
+        // two production targets (a single transient failure is retried in production too).
         if let Some((hp, path)) = v.split_once('/') {
             if let Some((h, p)) = hp.rsplit_once(':') {
                 if let Ok(port) = p.parse() {
-                    return vec![Target { host: h.into(), port, path: format!("/{path}") }];
+                    let t = Target { host: h.into(), port, path: format!("/{path}") };
+                    return vec![t.clone(), t];
                 }
             }
         }
