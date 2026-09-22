@@ -1586,3 +1586,108 @@ fn ide_auth_adversarial() {
     assert!(!h.ok("getDiagnostics", json!({})).to_string().contains(&pass));
     assert!(!h.ok("listServers", json!({})).to_string().contains(&browser_pass));
 }
+
+/// Malicious subscription corpus (native/tests/fixtures/subscriptions, see
+/// docs/adversarial-testing.md) plus redirects to forbidden targets. Invariants: the helper never
+/// crashes or hangs, nothing pointing at this computer / internal ranges / metadata is imported,
+/// nothing outside the allowlisted protocols is imported, and names are inert data.
+#[test]
+fn malicious_subscription_corpus() {
+    let body = Arc::new(Mutex::new(Vec::<u8>::new()));
+    let location = Arc::new(Mutex::new(None::<String>));
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    let sport = l.local_addr().unwrap().port();
+    let (b2, loc2) = (body.clone(), location.clone());
+    std::thread::spawn(move || {
+        for s in l.incoming().flatten() {
+            let mut s = s;
+            let mut buf = [0u8; 4096];
+            let n = s.read(&mut buf).unwrap_or(0);
+            let req = String::from_utf8_lossy(&buf[..n]).to_string();
+            let hop: usize = req.split("hop=").nth(1).and_then(|x| x.split(|c: char| !c.is_ascii_digit()).next()).and_then(|x| x.parse().ok()).unwrap_or(0);
+            if let Some(loc) = loc2.lock().unwrap().clone() {
+                let loc = loc.replace("{NEXT}", &(hop + 1).to_string());
+                let _ = s.write_all(format!("HTTP/1.1 302 Found\r\nLocation: {loc}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").as_bytes());
+                continue;
+            }
+            let b = b2.lock().unwrap().clone();
+            let _ = s.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", b.len()).as_bytes());
+            let _ = s.write_all(&b);
+        }
+    });
+    let o = HostOpts { xray: xray_path(), probe_port: 1, jb_socks: free_port(), jb_http: free_port(), allow_loopback: true, extra_env: vec![] };
+    let mut h = Host::start(&o);
+    let url = format!("http://127.0.0.1:{sport}/sub");
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/subscriptions");
+    let mut files: Vec<_> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.path()).collect();
+    files.sort();
+    // This helper runs with the test-mode loopback allowance (needed for the plain-HTTP subscription
+    // server), so loopback is checked separately below with a helper that has no allowance.
+    let loopback = ["127.0.0.1", "localhost", "::1", "2130706433", "0x7f000001", "::ffff:127.0.0.1"];
+    let forbidden_hosts = ["169.254.169.254", "metadata.google.internal", "0.0.0.0", "224.0.0.1"];
+    let mut corpus = Vec::new();
+    for f in files {
+        let name = f.file_name().unwrap().to_string_lossy().to_string();
+        let text = std::fs::read_to_string(&f).unwrap().replace("{UUID}", TEST_UUID);
+        corpus.push((name.clone(), text.clone()));
+        *body.lock().unwrap() = text.into_bytes();
+        let started = Instant::now();
+        let r = h.req("addSubscription", json!({"name": name, "url": url}));
+        let took = started.elapsed();
+        let list = h.ok("listServers", json!({}));
+        let servers = list["servers"].as_array().unwrap().clone();
+        eprintln!("{name}: {took:?} -> {} | {} servers: {:?}", if r["ok"] == true { r["result"].to_string() } else { r["error"].to_string() }, servers.len(), servers.iter().map(|s| format!("{}@{}", s["protocol"], s["address"])).collect::<Vec<_>>());
+        assert!(took < Duration::from_secs(20), "{name}: took {took:?}");
+        for s in &servers {
+            let addr = s["address"].as_str().unwrap_or("").trim_matches(['[', ']']).to_ascii_lowercase();
+            assert!(!forbidden_hosts.contains(&addr.as_str()), "{name}: imported a forbidden target {addr}");
+            assert!(["vless", "vmess"].contains(&s["protocol"].as_str().unwrap_or("")), "{name}: unexpected protocol {s}");
+            let n = s["name"].as_str().unwrap_or("");
+            assert!(!n.chars().any(|c| c.is_control() || matches!(c, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' | '\u{200b}'..='\u{200f}' | '\u{feff}')), "{name}: unsanitized name {n:?}");
+            assert!(n.chars().count() <= 200, "{name}: name not truncated ({} chars)", n.chars().count());
+        }
+        // Clean up for the next file.
+        if let Some(id) = r["result"]["subscriptionId"].as_str() {
+            h.ok("deleteSubscription", json!({"id": id, "deleteServers": true}));
+        }
+        assert_eq!(h.ok("getStatus", json!({}))["state"], "disconnected", "{name}: helper unhealthy");
+    }
+
+    // Redirects to forbidden targets and redirect loops.
+    *body.lock().unwrap() = format!("vless://{TEST_UUID}@ok.example.com:443?security=tls#ok").into_bytes();
+    for loc in [
+        "https://169.254.169.254/latest/meta-data/".to_string(),
+        "https://metadata.google.internal/".into(),
+        "https://10.0.0.1/sub".into(),
+        "https://192.168.1.1/sub".into(),
+        "http://sub.example.com/downgrade".into(),
+        "file:///C:/Windows/win.ini".into(),
+        "ftp://sub.example.com/x".into(),
+        "https://[fe80::1]/x".into(),
+        "https://0.0.0.0/x".into(),
+        format!("http://127.0.0.1:{sport}/sub?hop={{NEXT}}"), // endless loop -> redirect limit
+    ] {
+        *location.lock().unwrap() = Some(loc.clone());
+        let r = h.req("addSubscription", json!({"name": "redir", "url": url}));
+        eprintln!("redirect to {loc}: {}", r["error"]);
+        assert_eq!(r["error"]["code"], "SUBSCRIPTION_FAILED", "redirect to {loc} was followed: {r}");
+    }
+    *location.lock().unwrap() = None;
+    assert_eq!(h.ok("listServers", json!({}))["servers"].as_array().unwrap().len(), 0);
+    drop(h);
+
+    // The same corpus pasted/imported into a production-like helper (no loopback allowance).
+    let o = HostOpts { xray: xray_path(), probe_port: 1, jb_socks: free_port(), jb_http: free_port(), allow_loopback: false, extra_env: vec![] };
+    let mut h = Host::start(&o);
+    for (name, text) in corpus {
+        let r = h.req("importText", json!({"text": text, "source": "paste"}));
+        let servers = h.ok("listServers", json!({}))["servers"].as_array().unwrap().clone();
+        eprintln!("paste {name}: {} servers", servers.len());
+        for s in &servers {
+            let addr = s["address"].as_str().unwrap_or("").trim_matches(['[', ']']).to_ascii_lowercase();
+            assert!(!forbidden_hosts.contains(&addr.as_str()) && !loopback.contains(&addr.as_str()), "paste {name}: imported {addr}: {r}");
+            h.ok("deleteServer", json!({"id": s["id"]}));
+        }
+    }
+    assert_eq!(h.ok("getStatus", json!({}))["state"], "disconnected");
+}

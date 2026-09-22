@@ -1,0 +1,11 @@
+vless://{UUID}@169.254.169.254:80?security=none#metadata
+vless://{UUID}@metadata.google.internal:80?security=none#gcp
+vless://{UUID}@127.0.0.1:1080?security=none#loopback
+vless://{UUID}@localhost:1080?security=none#localhost
+vless://{UUID}@[::1]:1080?security=none#v6loop
+vless://{UUID}@0.0.0.0:443?security=tls#unspecified
+vless://{UUID}@2130706433:443?security=tls#decimal-loopback
+vless://{UUID}@0x7f000001:443?security=tls#hex-loopback
+vless://{UUID}@[::ffff:127.0.0.1]:443?security=tls#mapped
+vless://{UUID}@224.0.0.1:443?security=tls#multicast
+vless://{UUID}@ok.example.com:443?security=tls&type=tcp#the%20only%20valid%20one

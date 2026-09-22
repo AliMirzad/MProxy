@@ -34,9 +34,17 @@ pub fn opt_text(field: &str, v: Option<&str>, max: usize) -> VResult<Option<Stri
     }
 }
 
-/// Display names: control characters are stripped rather than rejected, then truncated.
+/// Invisible characters that can make a name display as something else: bidirectional
+/// overrides/isolates (U+202E turns "gnp.exe" into "exe.png" on screen), zero-width characters,
+/// the BOM, and line/paragraph separators.
+fn is_deceptive_format_char(c: char) -> bool {
+    matches!(c, '\u{061c}' | '\u{200b}'..='\u{200f}' | '\u{2028}'..='\u{202e}' | '\u{2060}'..='\u{2069}' | '\u{feff}' | '\u{fff9}'..='\u{fffb}')
+}
+
+/// Display names: control and deceptive invisible characters are stripped rather than rejected,
+/// then the name is truncated.
 pub fn clean_name(v: &str, fallback: &str) -> String {
-    let s: String = v.chars().filter(|c| !c.is_control()).collect();
+    let s: String = v.chars().filter(|c| !c.is_control() && !is_deceptive_format_char(*c)).collect();
     let s = s.trim();
     let s = if s.is_empty() { fallback } else { s };
     s.chars().take(MAX_NAME_LEN).collect()
@@ -733,4 +741,13 @@ mod tests {
         assert!(grpc_service_name(Some("my.Service/Tun")).is_ok());
         assert!(spider_x(Some("/../x")).is_err());
     }
+    #[test]
+    fn names_lose_invisible_and_bidi_characters() {
+        assert_eq!(clean_name("\u{202e}gnp.exe", "x"), "gnp.exe");
+        assert_eq!(clean_name("a\u{200b}b\u{200d}c\u{feff}\u{2066}d\u{2069}", "x"), "abcd");
+        assert_eq!(clean_name("\u{200b}\u{202e}", "fallback"), "fallback");
+        assert_eq!(clean_name("مثال 😀", "x"), "مثال 😀");
+        assert_eq!(clean_name(&"y".repeat(5000), "x").chars().count(), MAX_NAME_LEN);
+    }
+
 }

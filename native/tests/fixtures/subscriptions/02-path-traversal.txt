@@ -1,0 +1,4 @@
+vless://{UUID}@a.example.com:443?security=tls&type=tcp#..%2F..%2F..%2F..%2FWindows%2FSystem32%2Fdrivers%2Fetc%2Fhosts
+vless://{UUID}@b.example.com:443?security=tls&type=ws&path=%2F..%2F..%2Fetc%2Fpasswd#wspath
+vless://{UUID}@c.example.com:443?security=tls&type=grpc&serviceName=..%5C..%5Cx#grpc
+vless://{UUID}@..%2F..%2Fx:443?security=tls#badhost

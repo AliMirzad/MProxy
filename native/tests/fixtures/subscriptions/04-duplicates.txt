@@ -1,0 +1,4 @@
+vless://{UUID}@a.example.com:443?security=tls&type=tcp#first
+vless://{UUID}@a.example.com:443?security=tls&type=tcp#same%20server%20again
+vless://{UUID}@A.EXAMPLE.COM:443?security=tls&type=tcp#upper-case%20host
+vless://{UUID}@a.example.com:443?security=tls&type=tcp#third

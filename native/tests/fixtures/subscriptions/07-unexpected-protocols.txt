@@ -1,0 +1,10 @@
+trojan://pw@a.example.com:443#trojan
+ss://YWVzLTI1Ni1nY206cGFzcw@b.example.com:8388#ss
+hysteria2://pw@c.example.com:443#hy2
+wireguard://x@d.example.com:51820#wg
+socks://e.example.com:1080#socks
+http://f.example.com:8080/#http
+file:///etc/passwd
+javascript:alert(1)
+data:text/plain,hello
+vmess://eyJ2IjoiMiIsImFkZCI6ImcuZXhhbXBsZS5jb20iLCJwb3J0IjoiNDQzIiwiaWQiOiJ7VVVJRH0iLCJuZXQiOiJ0Y3AiLCJ0bHMiOiJ0bHMiLCJwcyI6InZtZXNzIG9rIn0=
