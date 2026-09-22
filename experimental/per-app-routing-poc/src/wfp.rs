@@ -72,7 +72,7 @@ impl WfpEnforcement {
             return Err(format!("FwpmEngineOpen0: {}", describe(rc)));
         }
         let sid = current_user_sid()?;
-        let sddl = wide(&format!("D:(A;;CC;;;{sid})"));
+        let sddl = wide(&format!("O:LSD:(A;;CC;;;{sid})"));
         let mut sd: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
         if unsafe { ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.as_ptr(), 1, &mut sd, std::ptr::null_mut()) } == 0 {
             unsafe { FwpmEngineClose0(engine) };

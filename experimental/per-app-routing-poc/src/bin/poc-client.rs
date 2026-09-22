@@ -106,6 +106,14 @@ fn main() {
                 Err(e) => json!({"error": e.to_string()}),
             }
         }
+        "exec" => {
+            // Runs another program (a different executable path) as a child.
+            let o = std::process::Command::new(arg(1)).args(&args[2..]).output();
+            match o {
+                Ok(o) => json!({"exec": arg(1), "child": serde_json::from_slice::<serde_json::Value>(&o.stdout).unwrap_or(json!(String::from_utf8_lossy(&o.stdout)))}),
+                Err(e) => json!({"error": e.to_string()}),
+            }
+        }
         "shell-child" => {
             let sys = std::path::PathBuf::from(std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".into())).join("System32");
             // cmd.exe parses its own command line: pass it verbatim (Rust's argument escaping is not

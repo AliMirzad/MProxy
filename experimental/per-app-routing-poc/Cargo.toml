@@ -11,6 +11,10 @@ name = "poc-harness"
 path = "src/bin/poc-harness.rs"
 
 [[bin]]
+name = "track-a"
+path = "src/bin/track-a.rs"
+
+[[bin]]
 name = "poc-client"
 path = "src/bin/poc-client.rs"
 
