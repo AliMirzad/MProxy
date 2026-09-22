@@ -22,12 +22,13 @@ Targets: **Windows** and **macOS**; **Chrome, Brave, Chromium** (Edge/Vivaldi re
 
 ```
 Popup ─▶ Service worker ──native messaging──▶ private-proxy-host (Rust) ──stdin config──▶ xray
-          │ chrome.proxy                                                                 │ 127.0.0.1 SOCKS5 (browser, random port)
+          │ chrome.proxy + onAuthRequired                                                │ 127.0.0.1 HTTP, per-connection password (browser, random port)
           ▼                                                                              │ 127.0.0.1 HTTP 10809 / SOCKS5 10808 (IDE)
-       Browser ─────────────────── socks5://127.0.0.1:<port> ─────────────────────────────▶ VLESS / VMess ─▶ server ─▶ Internet
+       Browser ─────────────────── http://127.0.0.1:<port> (authenticated) ───────────────▶ VLESS / VMess ─▶ server ─▶ Internet
 ```
 
-* The **extension** (MV3; permissions `proxy`, `storage`, `nativeMessaging`, `activeTab`, `privacy` for WebRTC protection)
+* The **extension** (MV3; permissions `proxy`, `storage`, `nativeMessaging`, `activeTab`, `privacy` for WebRTC protection,
+  `webRequest` + `webRequestAuthProvider` + `<all_urls>` to answer the local proxy's password challenge; CSP forbids all network access)
   is the only UI.
 * The **native helper** has no UI. The browser starts it and it exits with the browser. It parses and validates
   imports, stores servers (credentials encrypted with a key held in Windows Credential Manager / macOS Keychain),

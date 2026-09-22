@@ -84,7 +84,7 @@ The service worker mirrors the helper's status (see `controller.ts`):
 
 | Helper state | Browser |
 |---|---|
-| `connected` + port | `chrome.proxy.settings.set(fixed_servers, socks5://127.0.0.1:port, bypass <local>/private ranges)` |
+| `connected` + port | `chrome.proxy.settings.set(fixed_servers, http://127.0.0.1:port, bypass <local>/private ranges)`; 407 challenges from exactly that port answered with the per-connection credentials |
 | `connecting/restarting` while already proxied | unchanged (same port) |
 | anything else, helper exit, SW start | `chrome.proxy.settings.clear()` → direct |
 
@@ -117,8 +117,8 @@ Every listening socket the product creates (verified by socket enumeration in
 
 | Process | Protocol | Address | Port strategy | Purpose | Who can connect | Security boundary |
 |---|---|---|---|---|---|---|
-| Xray | SOCKS5 (TCP, UDP off) | 127.0.0.1 | ephemeral: an OS-assigned free port per connection | browser proxy | any local process (unauthenticated) while connected | loopback only; the tunnel is the only thing behind it |
-| Xray | HTTP proxy (TCP) | 127.0.0.1 | 10809, configurable (≥1024) | JetBrains/IDE endpoint | any local process while the browser runs | loopback only; self-loop to our ports blocked |
+| Xray | HTTP proxy (TCP) | 127.0.0.1 | ephemeral: an OS-assigned free port per connection | browser proxy | only with the per-connection random username/password (answered by the extension) | loopback only; authenticated; the tunnel is the only thing behind it |
+| Xray | HTTP proxy (TCP) | 127.0.0.1 | 10809, configurable (≥1024) | JetBrains/IDE endpoint | processes that know the IDE password (on by default) while the browser runs | loopback only; authenticated; self-loop to our ports blocked |
 | Xray | SOCKS5 (TCP, UDP off) | 127.0.0.1 | 10808, configurable (≥1024) | IDE endpoint (alternative) | same | same |
 | Helper | — | — | none | control goes over the native-messaging stdio pipe from the browser | only the pinned extension | no socket at all |
 

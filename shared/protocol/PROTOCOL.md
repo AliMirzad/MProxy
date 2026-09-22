@@ -1,4 +1,4 @@
-# Extension ↔ native helper protocol (v2)
+# Extension ↔ native helper protocol (v3)
 
 Transport: Chromium native messaging. Each message is a 32-bit length in native byte order
 followed by UTF-8 JSON. The extension's service worker holds one long-lived
@@ -60,7 +60,7 @@ Rules enforced by the helper:
   "state": "disconnected" | "connecting" | "connected" | "disconnecting" | "error",
   "phase": "starting" | "verifying" | "restarting",      // connecting only
   "serverId": "…",
-  "proxy": { "scheme": "socks5", "host": "127.0.0.1", "port": 53123 },  // connected only
+  "proxy": { "scheme": "http", "host": "127.0.0.1", "port": 53123, "username": "b…", "password": "…" },  // connected only
   "error": { "code": "SERVER_UNREACHABLE", "message": "…" },            // error only
   "jetbrains": { "enabled": true, "mode": "tunnel"|"direct"|"off", "socksPort": 10808, "httpPort": 10809, "issue": null, "authRequired": true },
   "xrayAvailable": true
@@ -68,7 +68,12 @@ Rules enforced by the helper:
 ```
 
 The browser proxy is applied **only** in `connected` with a `proxy` port. It is kept during
-`connecting/restarting` (same port). In every other state it is cleared.
+`connecting/restarting` (same port and credentials). In every other state it is cleared.
+
+`proxy.username`/`proxy.password` are random per connection (memory only). The service worker
+answers the inbound's 407 challenge with them in `webRequest.onAuthRequired`, but only for challenger
+`127.0.0.1:<port>` while its proxy setting is in effect. It strips them before the status reaches any
+UI page.
 
 ## Error codes
 
@@ -80,6 +85,6 @@ Messages are short and meant for the user. Technical detail goes to the helper l
 
 ## Versioning
 
-`PROTOCOL_VERSION` (currently 2; v2 added the IDE credential commands and `authRequired`) changes on any incompatible change. The extension sends
+`PROTOCOL_VERSION` (currently 3; v2 added the IDE credential commands and `authRequired`; v3 changed the browser proxy to an authenticated HTTP inbound: `proxy.scheme = "http"` plus per-connection `username`/`password`) changes on any incompatible change. The extension sends
 its version in `hello`. On a mismatch the helper answers `INCOMPATIBLE_VERSION`, naming
 the side to update, and the popup shows **Update required**.

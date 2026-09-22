@@ -32,7 +32,15 @@ clipboard.
 
 **Connected, but a site shows my real IP.** The site may use WebRTC. Check that **Settings → Privacy → Block
 WebRTC** is enabled (it is on by default). Also check `chrome://net-internals/#proxy`: the effective proxy should be
-`socks5://127.0.0.1:<port>`. If it is not, another extension may be winning; the popup would say so.
+`http://127.0.0.1:<port>` (protocol v3). If it is not, another extension may be winning; the popup would say so.
+
+**"Runtime security check failed".** A mandatory protection (Xray integrity, Xray isolation, private data folder,
+sandbox on macOS) could not be applied or verified, so the connection was not started. Copy the diagnostics. Typical causes:
+a changed ACL on `%LOCALAPPDATA%\PrivateProxy`, security software interfering with process creation, or (macOS)
+`sandbox-exec` unavailable. Do not work around it; report it to IT.
+
+**Disconnected: "Another extension changed the WebRTC setting".** Another extension or a policy controls WebRTC, so the
+real IP could leak. Remove the other extension, or turn off WebRTC protection in Settings if you accept that risk.
 
 **Everything went direct after an error.** That is the V1 design (no kill switch): if the tunnel fails, the
 browser returns to direct networking instead of breaking. The popup shows the error.

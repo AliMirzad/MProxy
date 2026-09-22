@@ -71,8 +71,12 @@ We therefore pin the release and generate `network`.
 
 ## TD-5 Browser proxy
 
-* `chrome.proxy.settings.set({scope:"regular", value:{mode:"fixed_servers", rules:{singleProxy:{scheme:"socks5",host:"127.0.0.1",port}, bypassList:["<local>", ...private ranges]}}})`.
-* SOCKS5 in Chromium resolves hostnames **at the proxy** (no local DNS for proxied requests).
+* `chrome.proxy.settings.set({scope:"regular", value:{mode:"fixed_servers", rules:{singleProxy:{scheme:"http",host:"127.0.0.1",port}, bypassList:["<local>", ...private ranges]}}})`.
+* Protocol v3: the inbound is an **authenticated HTTP proxy** with per-connection random credentials, answered in
+  `webRequest.onAuthRequired` (needs `webRequest`, `webRequestAuthProvider` and `<all_urls>` host permissions; the CSP still
+  forbids contacting any origin). Chromium cannot send SOCKS credentials, so the former SOCKS5 inbound was usable by every
+  local process and user (adversarial review F5).
+* An HTTP proxy receives hostnames unresolved (`CONNECT host:443`, absolute-form URIs), so there is no local DNS for proxied requests.
 * `regular`-scope settings **persist across browser restarts**. The service worker therefore
   clears the setting on `runtime.onStartup`/`onInstalled` and whenever the helper is not connected.
   This guarantees no stale proxy.

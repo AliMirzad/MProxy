@@ -2,7 +2,10 @@
 
 > Host-compromise analysis: [threat-model.md](threat-model.md). Final gate with PASS/FAIL per property:
 > [security-gate.md](security-gate.md). Dependencies: [dependencies.md](dependencies.md). The table below is
-> the original V1 review, updated for the hardening pass.
+> the original V1 review, updated for the hardening pass. **The 2026-09-22 adversarial review supersedes its
+> conclusions:** [adversarial-testing.md](adversarial-testing.md), [data-flow.md](data-flow.md),
+> [data-leak-review.md](data-leak-review.md), [managed-deployment.md](managed-deployment.md),
+> [release-integrity.md](release-integrity.md).
 
 ## Threat model (V1)
 
@@ -35,12 +38,12 @@ remote VPN server itself.
 | **Localhost exposure** | All inbounds are `127.0.0.1` only (asserted in tests). The generator has no code path to another listen address. | OK |
 | **Proxy self-loop / local DoS** | *Found during review:* a request to `http://127.0.0.1:10809/` through the IDE HTTP inbound made Xray proxy to itself recursively. **Fixed:** routing rules block loopback destinations on our own inbound ports. An integration test asserts it fails fast and the endpoint survives. | Fixed |
 | **Unauthenticated local proxy** | Any process of any local user can use the loopback endpoints (and therefore the tunnel) while they are up. This is accepted for V1: the typical deployment is a single-user workstation, and Chrome's proxy API cannot pass SOCKS credentials. On shared machines, disable the IDE endpoint. The browser port is ephemeral but also unauthenticated. | Accepted risk |
-| **Subscription handling** | HTTPS only (plain HTTP to loopback only in debug test mode). Destination policy on the URL, redirects and every DNS answer: no loopback, link-local/metadata, multicast; private networks only with an opt-in setting (`netpolicy.rs`). Downgrade redirects are refused, with at most 5 redirects. Timeouts are 10 s connect and 20 s total. The body is capped at 5 MiB and entries at 2,000, and each entry is isolated. A fixed User-Agent is sent with no cookies or identifiers. The URL is stored encrypted, shown only as its host, and redacted in errors. Fetches go through the tunnel when connected (`socks5h`, remote DNS). All of this is tested. | OK |
+| **Subscription handling** | HTTPS only (plain HTTP to loopback only in debug test mode). Destination policy on the URL, redirects and every DNS answer: no loopback, link-local/metadata, multicast; private networks only with an opt-in setting (`netpolicy.rs`). Downgrade redirects are refused, with at most 5 redirects. Timeouts are 10 s connect and 20 s total. The body is capped at 5 MiB and entries at 2,000, and each entry is isolated. A fixed User-Agent is sent with no cookies or identifiers. The URL is stored encrypted, shown only as its host, and redacted in errors. Fetches go through the tunnel when connected (the authenticated HTTP inbound, `CONNECT` with remote DNS). All of this is tested, including a hostile corpus and redirects (see adversarial-testing.md). | OK |
 | **QR codes** | Decoded locally with bundled jsQR. The payload is accepted only if it is a VLESS/VMess link, a base64 list or JSON, and is then parsed like any import. URLs in QR codes are never opened. The screenshot for "Scan current tab" uses `activeTab` (granted only by the user's click) and is never stored. | OK |
 | **Extension permissions** | `proxy`, `storage`, `nativeMessaging`, `activeTab`, `privacy` (WebRTC protection, on by default). There are no host permissions, and a proxy takeover by another extension disconnects the tunnel. CSP for extension pages is `script-src 'self'; object-src 'none'; connect-src 'self' data:`. | OK |
 | **UI injection** | All helper-provided strings (server names, messages) are rendered with `textContent` or `value`. No `innerHTML` is used with data. | OK |
 | **Installer** | Per-user and writes only product-owned locations. System tools are called by absolute path, link targets are refused, the install dir gets a private ACL, only the pinned Xray is installed, and `DependentLoadFlags=System32` defeats DLL planting (a real V1 issue, fixed and regression-tested). It writes: its install dir, HKCU native messaging keys and HKCU Uninstall entry (Windows), and NativeMessagingHosts manifests (macOS). The Windows Mark-of-the-Web is stripped from installed binaries. The installer cannot be triggered by the browser (Chromium passes only the origin argument). | OK |
-| **Dependency vulnerabilities** | `cargo audit` (RustSec, 1,253 advisories, 171 crates): **0 findings**. `npm audit`: **0 vulnerabilities**. Xray is pinned by version and SHA-256. TLS comes from the OS (SChannel / Security.framework); OpenSSL is not linked. | OK (2026-09-21) |
+| **Dependency vulnerabilities** | `cargo audit` (RustSec, 1,261 advisories, 171 crates): **0 findings**. `npm audit`: **0 vulnerabilities**. Xray is pinned by version and SHA-256. TLS comes from the OS (SChannel / Security.framework); OpenSSL is not linked. | OK (2026-09-22) |
 
 ## Residual risks and notes
 

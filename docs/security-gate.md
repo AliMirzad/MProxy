@@ -1,103 +1,128 @@
-# Final security gate (V1)
+# Security gate
 
-Date: 2026-09-21. Environment: Windows 11 Pro x64 (domain-joined), Brave 1.95 (Chromium 153), pinned
-Xray-core v26.3.27, local Xray test server (no real VLESS/VMess server, no Mac available).
-Threat analysis: [threat-model.md](threat-model.md).
+Date: 2026-09-22 (adversarial review; supersedes the 2026-09-21 gate, whose "no HIGH or CRITICAL"
+conclusion was re-verified and **did not hold**: see [adversarial-testing.md](adversarial-testing.md#findings)).
+Environment: Windows 11 Pro x64 (domain-joined, Kaspersky Endpoint Security active), Brave (Chromium
+153), Xray-core v26.3.27, local Xray test server. No Mac, no real VLESS/VMess server, no admin rights
+for browser policies. Threat analysis: [threat-model.md](threat-model.md).
 
-Status values:
-* **PASS**: tested at runtime, with the evidence named
-* **FAIL**: known problem (with severity)
-* **NOT TESTED**: implementation exists, but it was not exercised at runtime here
-* **NOT APPLICABLE**: with justification
+## Status values
 
-Test suites referenced below:
+| Status | Meaning |
+|---|---|
+| **PASS: runtime verified** | an attack or check was executed against the real binaries/OS/browser and observed |
+| **PASS (CODE REVIEW ONLY)** | enforced in code and reviewed; not exercised at runtime |
+| **FAIL** | known problem, with severity |
+| **NOT TESTED** | could have been run here but was not |
+| **ENVIRONMENT UNAVAILABLE** | needs hardware, rights or services this environment does not have |
+
+## Test suites
 
 | Suite | Command | Result |
 |---|---|---|
-| Native unit tests (incl. `parse/security_tests.rs`, `netpolicy`, `harden`, `winproc`, `macsandbox`) | `node scripts/cargo.mjs test --lib` | 71/71 |
-| Native integration tests (real helper process, real restricted Xray, local Xray server) | `node scripts/cargo.mjs test --test integration` | 14/14 |
-| Extension unit + security tests (`tests/security.test.ts`) | `npm --prefix extension test` | 50/50 |
-| Real-browser E2E (Brave, real installer, attacker page + attacker extension) | `npm run test:e2e` | 46/46 |
-| `cargo clippy -D warnings` (Windows x64, macOS arm64 + x64) | `npm run lint` | clean |
-| `cargo audit` (1,253 advisories, 171 crates) / `npm audit` | — | 0 / 0 |
+| Native unit tests | `node scripts/cargo.mjs test --lib` | 76/76 |
+| Native integration (real helper, real restricted Xray, local server) | `node scripts/cargo.mjs test --test integration` | 20/20 (intermittent: 1 failure in 5 full runs of `ide_endpoint_requires_password` under parallel load; passes alone; see adversarial-testing.md) |
+| Extension unit + security | `npm --prefix extension test` | 56/56 |
+| Real-browser E2E incl. hostile page + hostile extension fixtures | `npm run test:e2e` | 82/82 |
+| Packaged runtime adversarial test | `node scripts/test-package-adversarial.mjs` | 10/10, 1 ENVIRONMENT UNAVAILABLE |
+| Impersonation experiment | `node extension/tests/e2e/experiments/impersonation-experiment.mjs` | attack **succeeds** (expected; see B9) |
+| Clippy `-D warnings` (Windows, macOS arm64/x64) | `npm run lint` | clean |
+| `cargo audit` (1,261 advisories, 171 crates) / `npm audit` | — | 0 / 0 |
 
 ## A. Network privacy
 
 | # | Property | Status | Evidence |
 |---|---|---|---|
-| A1 | Browser DNS for proxied traffic is resolved by the server, not locally | **PASS** | E2E: `probe.test` (resolvable only in the server's DNS) is reachable through REALITY, VLESS-WS and VMess-WS and unreachable before connecting and after disconnecting. Integration `all_transports_end_to_end` covers 9 protocol/transport combinations |
-| A2 | IDE HTTP endpoint resolves names remotely | **PASS** | Integration (all transports via the IDE HTTP port) and E2E "JetBrains HTTP endpoint tunnels (remote DNS)" |
-| A3 | IDE SOCKS endpoint resolves names remotely | **PASS** for clients sending hostnames (SOCKS5 ATYP=domain, integration test). Clients that resolve locally before using SOCKS are outside our control, as documented in jetbrains.md |
-| A4 | IPv4 behaviour (proxied, bypass for private ranges) | **PASS** | E2E: bypass list read back from the browser equals the documented list; traffic tests |
-| A5 | IPv6 destinations go through the proxy | **NOT TESTED** | Chromium `fixed_servers` proxies IPv6 literals like any destination (bypass only `[::1]`, `fc00::/7`, `fe80::/10`). There was no IPv6 test network |
-| A6 | WebRTC protection on by default while connected | **PASS** | E2E: `webRTCIPHandlingPolicy = disable_non_proxied_udp` while connected, restored after disconnect |
-| A7 | No real-IP leak from an actual WebRTC/STUN page | **NOT TESTED** | Needs a STUN server and a public IP comparison |
-| A8 | No hidden fallback: the UI never says "Connected" while traffic goes direct | **PASS** | Unit (controller): helper death → proxy cleared + error; restart keeps the dead-port proxy (fail closed during restart). E2E: **real proxy takeover** by a second extension → tunnel disconnected, "Browser proxy blocked" shown; Xray crash → restart |
-| A9 | OS proxy settings are never changed (no unintended app proxying) | **PASS** (Windows) | E2E: `HKCU\…\Internet Settings` proxy values identical before and during connection. macOS (`scutil --proxy`): **NOT TESTED** |
-| A10 | No stale browser proxy after a crash or restart | **PASS** | E2E "no stale proxy after browser restart" |
-| A11 | Public IP changes to the server's IP with a real server | **NOT TESTED** | No real server available |
-| A12 | Private ranges and plain host names go direct | **PASS** (by design, documented) | E2E bypass-list check. Documented in README, threat model and troubleshooting |
+| A1 | Browser DNS for proxied traffic resolved by the server | **PASS: runtime verified** | E2E `probe.test` only resolvable on the server; 9 transports in integration |
+| A2 | IDE HTTP endpoint resolves remotely | **PASS: runtime verified** | integration + E2E |
+| A3 | IDE SOCKS endpoint resolves remotely (for clients sending hostnames) | **PASS: runtime verified** | integration (ATYP=domain) |
+| A4 | Bypass list exactly the documented private ranges | **PASS: runtime verified** | E2E reads it back from the browser |
+| A5 | IPv6 destinations proxied | **ENVIRONMENT UNAVAILABLE** | no IPv6 network |
+| A6 | WebRTC protection on while connected | **PASS: runtime verified** | E2E policy read-back; hostile page gathers **0** ICE candidates |
+| A6b | WebRTC protection cannot be silently overridden by another extension | **PASS: runtime verified** (fixed in this review) | E2E: override → tunnel disconnected with a WebRTC reason; reconnects when released |
+| A7 | No real-IP leak through STUN (srflx) | **ENVIRONMENT UNAVAILABLE** | no STUN server / public IP comparison; host candidates: none |
+| A8 | Never "Connected" while traffic goes direct | **PASS: runtime verified** | E2E takeover, takeover racing connect, 25× flapping: invariant held |
+| A9 | OS proxy settings never changed | **PASS: runtime verified** (Windows); macOS **ENVIRONMENT UNAVAILABLE** | E2E registry compare |
+| A10 | No stale proxy after browser crash | **PASS: runtime verified** | E2E |
+| A11 | Public IP changes with a real server | **ENVIRONMENT UNAVAILABLE** | no real server |
+| A12 | Subscription refresh while connected goes through the tunnel | **PASS: runtime verified** (regression fixed in this review) | integration `subscription_update_while_connected` fails on the old code, passes now |
+| A13 | No telemetry, analytics or unexpected third parties | **PASS: runtime verified** (extension CSP) + **PASS (CODE REVIEW ONLY)** (helper/Xray egress) | [data-leak-review.md](data-leak-review.md) |
 
 ## B. Host security
 
 | # | Property | Status | Evidence |
 |---|---|---|---|
-| B1 | Imported configuration cannot inject Xray features (config is data, regenerated) | **PASS** | `security_tests::dangerous_json_fields_reject_the_entry`, `generated_config_contains_only_allowlisted_capabilities`, `validate::xhttp_extra_allowlist`. Integration `malicious_subscription_bodies` (1 clean imported, 3 hostile rejected) |
-| B2 | Unknown fields are rejected, not silently passed | **PASS** | Same tests (`Unsupported field …` for outbound, streamSettings, tlsSettings, link parameters, VMess keys, XHTTP extra, config sections) |
-| B3 | No remote code execution through the helper (no generic OS operations) | **PASS** | Integration `hostile_native_messages`: 14 generic commands (`exec`, `runProcess`, `shell`, `powershell`, `writeFile`, …) → `INVALID_REQUEST`. Protocol unit tests |
-| B4 | No command injection | **PASS** | No shell anywhere. Xray has fixed arguments. `command_injection_strings_stay_inert_data`: metacharacters in names stay literal, and in hosts are rejected. Hostile name via real helper stored literally |
-| B5 | No arbitrary file access via the helper | **PASS** | No command takes a path. Path-like IDs rejected (`hostile_native_messages`). Release binary ignores `PRIVATE_PROXY_DATA_DIR` (manual run: real data dir used, temp dir untouched) |
-| B6 | Path traversal in non-path fields rejected | **PASS** | `validate::path_tricks_rejected`, `security_tests::unknown_link_parameters_are_rejected` (`../`, `..\`, UNC, `file:`, `%2e%2e`, drive letters) |
-| B7 | Native messaging abuse: malformed, oversized, unknown | **PASS** | Integration: malformed frames → `protocolError`, helper survives. >8 MiB frame → helper exits and Xray stops. Extra fields (`xrayPath`, `dataDir`, `xrayArgs`) → `INVALID_REQUEST` |
-| B8 | Other extensions cannot use the native host or our extension | **PASS** | E2E attacker extension: "Access to the specified native messaging host is forbidden"; `sendMessage`/`connect` to our ID fail. Integration `unauthorized_callers_are_rejected` (wrong origin → exit 3, no output) |
-| B9 | Extension identity cannot be spoofed by another locally loaded **unpacked** extension | **FAIL: MEDIUM** | Unpacked IDs derive from the public key in the manifest. A malicious unpacked extension could reuse it. Mitigation for rollout: policy force-installed CRX + Developer mode disabled by policy (threat-model #10) |
-| B10 | Web pages cannot reach the extension or the helper | **PASS** | E2E hostile page: no `chrome.runtime`, extension resources blocked, IDE endpoint not usable as a relay. Manifest test: no content scripts, `externally_connectable` or web-accessible resources |
-| B11 | Listeners bound to loopback only; no unexpected sockets | **PASS** | Integration `xray_isolation_and_listeners`: netstat enumeration shows exactly 3 TCP listeners (browser, IDE SOCKS, IDE HTTP) on 127.0.0.1, no UDP, and the helper listens on nothing. Generated-config tests assert `listen: 127.0.0.1` |
-| B12 | IDE endpoint (10809/10808) usable only with the user's credentials | **PASS** | On by default. Integration `ide_endpoint_requires_password`: no/wrong credentials → HTTP 407, SOCKS refused, in direct and tunnel mode. Regenerating invalidates the old password. E2E: 407 without the password, 200 with it |
-| B12b | Browser SOCKS port usable only by the intended user | **FAIL: LOW** (residual) | Chromium cannot send SOCKS credentials, so this port has none. It is a random port that exists only while connected |
-| B13 | Xray isolated from the host (Low integrity, no child processes, job, mitigations) | **PASS** (Windows) | Integration + E2E (installed runtime): OS reports `integrity=low`, `childProcessesBlocked`, `extensionPointsDisabled`, `remoteImagesBlocked` |
-| B13m | Same on macOS: Seatbelt sandbox (no fork/exec, no file writes, no reads in the home folder except Xray's dir) | **NOT TESTED** | Implemented (`macsandbox.rs`) with a per-session self-test. If the sandbox cannot run, Xray runs unsandboxed and Diagnostics shows `sandbox: false`. The profile is unit-tested; the code compiles for macOS arm64/x64. It needs a run on a real Mac |
-| B14 | A compromised Xray cannot read stored credentials or write user files | **PASS** (Windows) | Integration: a Low-integrity process under the same token cannot `type secrets.bin` (Medium control can) and cannot write into `%USERPROFILE%`. macOS: by the B13m profile (**NOT TESTED**) |
-| B15 | No privilege escalation; runtime never runs as admin/root | **PASS** (Windows) | Install and run in E2E without elevation. Helper at Medium, Xray at Low. macOS `.pkg` (root only during install): **NOT TESTED** |
-| B16 | Xray binary integrity verified before every launch | **PASS** | Integration `tampered_xray_is_never_executed`: 1-bit-modified Xray and a foreign executable are both refused, never started, `xrayAvailable=false`. The installer refuses to install a non-pinned Xray |
-| B17 | Xray artifacts are official and pinned | **PASS** | Zip SHA-256 values match upstream `.dgst` for all 4 platforms (checked 2026-09-21). Binary SHA-256 pinned in `xray.lock.json` |
-| B18 | Product-owned Xray only (no PATH search, env override ignored in release) | **PASS** | Release binary with `PRIVATE_PROXY_XRAY=cmd.exe` → "xray: not found" |
-| B19 | DLL search-order hijacking | **PASS** | Integration `planted_dlls_are_not_loaded`. Control: the V1 helper (DependentLoadFlags=0) failed to start with a planted `secur32.dll`; the fixed one runs |
-| B20 | Installer tools called by absolute path (cmd, PING, powershell, chmod, awk) | **NOT TESTED** at runtime | Code change only (`install.rs`, `Install.cmd`, `install.sh`, `build-pkg.sh`) |
-| B21 | Install directory not writable by other users | **PASS** (Windows) | E2E `icacls`: user, SYSTEM and Administrators only, protected |
-| B22 | Data directory private + unreadable to Low integrity | **PASS** (Windows) | `dataDirProtection` = `D:P(user)(SYSTEM)` + ML `NR NW NX` (integration). Unit `harden::private_dir_and_link_detection`. macOS 0700: **NOT TESTED** |
-| B23 | Symlink/junction attacks on the data dir | **PASS** | Integration `linked_data_dir_is_refused`: junction → exit 4, nothing written through it (found and fixed a log-dir-first bug during this test) |
-| B24 | SSRF from subscriptions (loopback, metadata, private, DNS rebinding) | **PASS** | Integration `subscription_ssrf_is_blocked`: 11 blocked URLs, 0 connections reached the local service, DNS rebinding via `localtest.me` refused. Unit `url_rules`, `dns_answers_are_checked` |
-| B25 | Server addresses cannot target loopback or metadata | **PASS** | `local_and_metadata_server_addresses_are_rejected`; integration import refused; connect-time re-check |
-| B26 | Secrets encrypted at rest | **PASS** | Unit `store::secrets_not_in_plaintext_files` |
-| B27 | Secrets never returned by status/metadata APIs | **PASS** | Integration `hostile_native_messages` (listServers, getStatus, getSettings, getDiagnostics contain no UUID or REALITY key). E2E "popup does not expose the user ID" |
-| B28 | Logs redacted | **PASS** | Unit `log::redacts_secrets` |
-| B29 | No dynamic code in the extension (eval, remote scripts) | **PASS** | `security.test.ts` scans the release bundle. The CSP has no `unsafe-*` or remote sources |
-| B30 | Dependencies free of known vulnerabilities | **PASS** | `cargo audit` 0, `npm audit` 0 (2026-09-21) |
-| B31 | Builds reproducible from lockfiles | **NOT TESTED** in CI | `--locked` in package.mjs and CI, `npm ci`. The CI workflow has not been run |
-| B32 | Release builds ignore test hooks | **PASS** | Manual run with every `PRIVATE_PROXY_*` variable set: real data dir, no Xray override. The debug binary honours them only in test mode |
-| B33 | Uninstall does not execute or follow imported data | **PASS** | Uninstall deletes fixed paths. E2E runs `uninstall --purge`. Links removed without following (code). The delayed `cmd` removal branch: **NOT TESTED** |
-| B34 | Signed binaries (Authenticode / Developer ID + notarization) | **FAIL: MEDIUM** | Signing is built into packaging (`PRIVATE_PROXY_SIGN_THUMBPRINT` / `PRIVATE_PROXY_CODESIGN_IDENTITY`, `scripts/sign-windows.ps1`), but no certificate is available, so the current builds are unsigned. A certificate must come from a CA or the company's IT |
+| B1 | Imported config cannot inject Xray features | **PASS: runtime verified** | unit allowlist tests; integration hostile bodies + corpus (`08-unknown-xray-fields`, `09-full-client-config`) |
+| B2 | Unknown fields rejected | **PASS: runtime verified** | same |
+| B3 | No generic OS operations through the helper | **PASS: runtime verified** | `hostile_native_messages` |
+| B4 | No command injection (names, links, installer) | **PASS: runtime verified** | corpus `01-command-injection`; `Install.cmd` folder-name injection: previous line **injectable** (reproduced), fixed line not |
+| B5 | No arbitrary file access via the helper | **PASS: runtime verified** | no path arguments; release ignores test hooks |
+| B6 | Path traversal in fields rejected | **PASS: runtime verified** | unit + corpus `02-path-traversal` |
+| B7 | Native messaging abuse | **PASS: runtime verified** | integration malformed/oversized frames |
+| B8 | Other extensions cannot use the host or our extension | **PASS: runtime verified** | E2E fixture: port + one-shot native messaging forbidden; 3 message types + popup port refused; files unreadable |
+| **B9** | Extension identity cannot be impersonated | **FAIL: HIGH** (unmanaged install) | impersonation experiment: our `key` → our ID → IDE password read, IDE auth disabled, attacker server imported. Closed only by [managed deployment](managed-deployment.md) (policy CRX, developer mode off); policy enforcement itself: **ENVIRONMENT UNAVAILABLE** (needs admin) |
+| B10 | Web pages cannot reach extension/helper/ports | **PASS: runtime verified** | E2E hostile page (public origin) |
+| B11 | Listeners loopback only | **PASS: runtime verified** | socket enumeration |
+| B12 | IDE endpoint needs the password; brute force, malformed auth | **PASS: runtime verified** | `ide_auth_adversarial`: 20 regenerations distinct/24 chars/57-symbol alphabet; 13 malformed `Proxy-Authorization` + 5 malformed SOCKS auth refused; 1,000 guesses → 0 accepted in 140 ms, same Xray PID after |
+| B12b | Browser tunnel port usable only by the browser | **PASS: runtime verified** (fixed in this review) | E2E + integration: 407 without / with guessed credentials; IDE password rejected there and vice versa |
+| B12c | Credentials never logged or stored in plaintext; never shown to the UI (browser credentials) | **PASS: runtime verified** | `ide_auth_adversarial` scans helper log, `state.json`, `secrets.bin`; E2E: popup state has no credentials; other extension's `webRequest` `extraHeaders` never sees `Proxy-Authorization`; trap proxy never received them |
+| B13 | Xray isolation (Windows) | **PASS: runtime verified** | `xray_sandbox_probe` (restricted vs control), E2E installed runtime |
+| B13a | Mandatory isolation failure blocks the connection | **PASS: runtime verified** | `mandatory_protection_failure_blocks_connection`, `weakened_data_folder_blocks_connection` |
+| B13m | macOS Seatbelt sandbox, fail-closed | **ENVIRONMENT UNAVAILABLE** | implemented; unit-tested profile; compiles for macOS; `sandbox-exec` is deprecated (see adversarial-testing.md §3) |
+| B14 | Compromised Xray cannot read user files or secrets, or write anywhere persistent | **PASS: runtime verified** (Windows; fixed in this review: Low IL alone still allowed reading Documents) | probe reads/writes |
+| B15 | No elevation | **PASS: runtime verified** (Windows) | E2E install without admin |
+| B16 | Xray integrity before every launch | **PASS: runtime verified** | `tampered_xray_is_never_executed` |
+| B17 | Xray provenance pinned | **PASS: runtime verified** | zip + binary SHA-256 re-verified by `fetch-xray.mjs`; release manifest |
+| B18 | No PATH search / env override in release | **PASS (CODE REVIEW ONLY)** this round (runtime-verified in the 2026-09-21 gate; code unchanged) | `xray.rs` resolves only its own directory; release ignores `PRIVATE_PROXY_XRAY` |
+| B19 | DLL planting, static imports | **PASS: runtime verified** | release PE from the zip: `DependentLoadFlags=0x800`; integration planted-DLL test |
+| B19b | DLL planting, runtime loads (Schannel, DNS, Credential Manager, Xray) | **PASS: runtime verified** (debug build, same flags) | marker DLLs under 62 names next to helper and Xray; control program loads them; full session loads none |
+| B19c | DLL planting with the **packaged release** helper executing | **ENVIRONMENT UNAVAILABLE** | endpoint security deletes the unsigned release helper after extraction |
+| B20 | Installer uses absolute tool paths | **PASS: runtime verified** (fixed in this review: the shipped `Install.cmd` had lost its backslashes, so the Mark-of-the-Web step never ran) | package test runs the fixed script |
+| B21 | Install dir not writable by others | **PASS: runtime verified** | E2E icacls |
+| B22 | Data dir private, not readable at Low IL | **PASS: runtime verified** (Windows); macOS **ENVIRONMENT UNAVAILABLE** | integration |
+| B23 | Junction/symlink data or install dir refused | **PASS: runtime verified** (data dir) / **PASS (CODE REVIEW ONLY)** (install target, `install.rs` `is_link`) | `linked_data_dir_is_refused` |
+| B24 | Subscription SSRF incl. redirects and rebinding | **PASS: runtime verified** | `subscription_ssrf_is_blocked`, corpus redirects (metadata, private, downgrade, file, ftp, fe80, 0.0.0.0, loop) |
+| B25 | Server addresses cannot target loopback/metadata | **PASS: runtime verified** | corpus `06-internal-targets` on a production-like helper |
+| B26–B28 | Secrets encrypted, not in APIs, logs redacted | **PASS: runtime verified** | unit + integration |
+| B29 | No dynamic code in the extension | **PASS: runtime verified** | bundle scan, CSP |
+| B30 | Dependencies without known vulnerabilities | **PASS: runtime verified** | audits 2026-09-22 |
+| B31 | Reproducible builds | **NOT TESTED** | manifest records inputs; no second independent build compared |
+| B32 | Release ignores test hooks | **PASS (CODE REVIEW ONLY)** this round (runtime in the previous gate; code unchanged) | `lib.rs test_hook` |
+| B33 | Uninstall safe with hostile paths | **PASS (CODE REVIEW ONLY)** | `install.rs remove_files` refuses `" % & \| ^ < > !`, System32-absolute `cmd`/`PING` |
+| B34 | Signed binaries | **FAIL: MEDIUM** → deployment blocker | unsigned; quarantined by EDR on this machine |
+| B35 | Test fixtures/binaries never shipped | **PASS: runtime verified** | `package.mjs assertNoTestArtifacts` ran on this build |
+| B36 | Deceptive server names (bidi/zero-width) | **PASS: runtime verified** (fixed in this review) | unit + corpus `05-unicode` |
 
 ## Result
 
-* **CRITICAL / HIGH unresolved: none.**
-* **FAIL, MEDIUM:**
-  * B9: unpacked extension ID spoofing (mitigated by policy CRX distribution)
-  * B34: unsigned builds (signing support ready; needs a certificate)
-* **FAIL, LOW:** B12b: the browser's own ephemeral SOCKS port has no password (Chromium limitation).
-* **NOT TESTED (runtime):**
-  * everything on macOS
-  * IPv6
-  * real WebRTC leak test
-  * real servers / public IP change
-  * the Windows installer's absolute-path invocation
-  * CI
+* **CRITICAL:** none found.
+* **HIGH:**
+  * B9 extension impersonation in developer mode, **open** for unmanaged installs (closed by managed deployment).
+  * Fixed in this review: Xray could read the user's documents (Low IL without deny-only SID).
+* **MEDIUM open:** B34 unsigned binaries (blocked by EDR).
+* **MEDIUM fixed in this review:**
+  * silent downgrade of isolation;
+  * macOS unsandboxed fallback;
+  * browser port open to other local users;
+  * WebRTC override by other extensions.
+* **LOW fixed:**
+  * `Install.cmd` path and folder-name injection;
+  * subscription refresh while connected;
+  * deceptive names.
+* **ENVIRONMENT UNAVAILABLE:**
+  * macOS (all items);
+  * IPv6;
+  * STUN;
+  * real server;
+  * browser policies (admin);
+  * packaged-release execution (EDR).
 
-**Designation:** the **Windows** build meets the gate for **controlled company pilot use** if the extension is
-distributed as a policy-installed CRX with Developer mode disabled (closes B9). Signing (B34) is required before
-broad rollout. The **macOS** build has its isolation implemented, but it is **not company-ready** until the
-macOS items (B13m, installer, Keychain) are validated on real hardware.
+**Designation:**
+* **Not approved for company workstations as currently distributed.**
+* **Windows** is acceptable for a **controlled pilot** only when all of these hold:
+  * the binaries are signed and allowlisted by IT;
+  * the extension is force-installed as a CRX with developer mode blocked;
+  * the native host is installed machine-wide ([managed-deployment.md](managed-deployment.md)).
+* **macOS** is not company-ready until it is validated on hardware.
 
-This result does not claim the product cannot be attacked or observed. It documents a minimized,
-tested attack surface, and the residual risks listed above and in the threat model.
+This gate documents a tested, minimized attack surface. It does not claim the product cannot be attacked or observed.

@@ -64,7 +64,7 @@ Use a real server. Do at least one run with a VLESS REALITY link and one with a 
 | 4 | Select the server → **Connect** | Connecting → Connected within a few seconds. Badge ON |
 | 5 | Open <https://ifconfig.me> (or similar) | Shows the **server's** IP, not yours |
 | 6 | DNS: DNS-leak test site, and/or `chrome://net-export` (see troubleshooting.md) | Resolvers belong to the server side. No local DNS jobs for proxied hosts |
-| 6b | `chrome://net-internals/#proxy` | Effective proxy `socks5://127.0.0.1:<port>` |
+| 6b | `chrome://net-internals/#proxy` | Effective proxy `http://127.0.0.1:<port>` (authenticated; protocol v3) |
 | 7 | **Disconnect** | Disconnected. Badge cleared |
 | 8 | Reload ifconfig.me | Your own IP again. `chrome://net-internals/#proxy` shows direct/system |
 | 9 | Configure IntelliJ (docs/jetbrains.md), HTTP 127.0.0.1:10809 | — |
