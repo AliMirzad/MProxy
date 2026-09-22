@@ -8,7 +8,8 @@ the host or leak data. Every remote input is treated as hostile.
 Revised 2026-09-22 after the adversarial review. The status of each property is in
 [security-gate.md](security-gate.md), the attacks that were run are in
 [adversarial-testing.md](adversarial-testing.md), and network flows are in [data-flow.md](data-flow.md).
-File references point at the code that enforces a control.
+File references point at the code that enforces a control (paths relative to `native/src`; Phase 6
+layout: `core/`, `runtime/`, `platform/`, `browser/`, see [module-boundaries.md](module-boundaries.md)).
 
 ## Components and trust boundaries
 
@@ -26,19 +27,19 @@ File references point at the code that enforces a control.
 | Web page → extension | nothing (no content scripts, no `externally_connectable`, no web-accessible resources) | `manifest.json`, `tests/security.test.ts`, E2E hostile page |
 | Other extension → extension / helper | nothing (sender checks; `allowed_origins` = pinned ID; helper re-checks `argv[1]`) | `service-worker.ts fromOwnPage`, `install.rs`, `main.rs` |
 | **Extension identity** | an unpacked copy with our public `key` gets our ID (developer mode) | not enforceable by the product: [managed-deployment.md](managed-deployment.md) |
-| Extension → helper | closed, typed command set | `protocol.rs` (`deny_unknown_fields`, UUID ids), `service.rs` |
-| Imported data → Xray config | typed model only; config regenerated | `parse/*`, `parse/fields.rs`, `validate.rs`, `xrayconf.rs` |
+| Extension → helper | closed, typed command set, mapped onto the Core API | `browser/protocol.rs` (`deny_unknown_fields`, UUID ids), `browser/adapter.rs` → `core/api.rs` |
+| Imported data → Xray config | typed model only; config regenerated | `core/import/*`, `core/import/fields.rs`, `validate.rs`, `xray_config.rs` |
 | Helper → Xray | fixed arguments, config via stdin, `SystemRoot`-only environment, pinned binary verified before every launch | `xray.rs`, `winproc.rs` |
 | Xray → host | restricted token (user SID deny-only, no privileges) + Low IL, job, no child processes, mitigations; verified **before** Xray runs, else not started | `winproc.rs` |
 | Helper → network | subscription fetch only (destination policy, HTTPS, limits) | `subscription.rs`, `netpolicy.rs` |
-| Local processes / other users → proxy listeners | loopback only, **every listener needs credentials** | `xrayconf.rs`, `service.rs` |
+| Local processes / other users → proxy listeners | loopback only, **every listener needs credentials** | `core/xray_config.rs`, `core/credentials.rs`, `core/api.rs` |
 
 ## Protection levels (fail-closed policy)
 
 Every protection is in one of three classes. A MANDATORY protection that cannot be applied or
 verified stops the connection with **"Runtime security check failed: … The connection was not
-started."** and nothing runs without it (`service.rs security_failure`, `winproc.rs verify_suspended`,
-`xray.rs` on macOS).
+started."** and nothing runs without it (`core/error.rs CoreError::from_runtime_security`,
+`platform/winproc.rs verify_suspended`, `runtime/xray.rs` on macOS).
 
 | Class | Protection | On failure |
 |---|---|---|

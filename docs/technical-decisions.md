@@ -172,7 +172,7 @@ match, so the selection survives.
 | # | Decision |
 |---|---|
 | TD-20 | WebRTC protection on by default; `privacy` became a required permission (safe defaults win) |
-| TD-21 | Imported config: strict allowlists; dangerous and **unknown** fields reject the entry (`parse/fields.rs`) |
+| TD-21 | Imported config: strict allowlists; dangerous and **unknown** fields reject the entry (`core/import/fields.rs`) |
 | TD-22 | Destination policy (`netpolicy.rs`): loopback, link-local/metadata etc. refused; private networks allowed for proxy servers and opt-in for subscriptions; DNS answers checked for direct subscription fetches |
 | TD-23 | Xray on Windows: Low integrity, mitigations, no child processes, restricted job, minimal environment (`winproc.rs`). ACG and signed-only images rejected for EDR compatibility |
 | TD-24 | Pinned Xray **binary** SHA-256, verified before every launch; geo data files dropped |

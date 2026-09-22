@@ -11,7 +11,7 @@
 //! * anything else – unknown: the entry is **rejected**
 //!
 //! Dropping is safe because nothing is forwarded: the Xray config is regenerated from the typed
-//! model (`xrayconf.rs`). The tables follow the Xray-core v26.3.27 config structs
+//! model (`xray_config.rs`). The tables follow the Xray-core v26.3.27 config structs
 //! (`infra/conf/*.go`); keys were taken from the source at that tag.
 
 use serde_json::{Map, Value};

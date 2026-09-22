@@ -4,7 +4,7 @@ Transport: Chromium native messaging. Each message is a 32-bit length in native 
 followed by UTF-8 JSON. The extension's service worker holds one long-lived
 `chrome.runtime.connectNative("com.privateproxy.host")` port.
 
-Implementations: [`native/src/protocol.rs`](../../native/src/protocol.rs) (authoritative),
+Implementations: [`native/src/browser/protocol.rs`](../../native/src/browser/protocol.rs) (authoritative),
 [`types.ts`](types.ts) (TypeScript mirror).
 
 ## Envelope

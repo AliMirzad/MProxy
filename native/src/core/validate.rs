@@ -425,7 +425,7 @@ fn xmux(v: &Value) -> VResult<Value> {
     Ok(Value::Object(m))
 }
 
-/// Validates an XHTTP `extra` object against the allowlist in `parse/fields.rs` and returns the
+/// Validates an XHTTP `extra` object against the allowlist in `core/import/fields.rs` and returns the
 /// normalized copy that is placed in the generated config. Unknown keys are rejected (not dropped),
 /// and `downloadSettings` (a nested stream config) is rebuilt field by field, so fields such as
 /// `masterKeyLog`, `certificates` or `sockopt` can never reach Xray through it.

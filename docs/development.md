@@ -43,7 +43,7 @@ pinned extension ID, so the registered runtime accepts both. After a helper chan
 
 | Layer | Where | Runs |
 |---|---|---|
-| Parser, validation, config generation, store, secrets, framing, protocol, redaction, hostile-input suite (`parse/security_tests.rs`), destination policy, ACLs, Xray under restrictions | `native/src/**` `#[cfg(test)]` | `cargo test` (70 tests) |
+| Parser, validation, config generation, store, secrets, framing, protocol, redaction, hostile-input suite (`core/import/security_tests.rs`), destination policy, ACLs, Xray under restrictions | `native/src/**` `#[cfg(test)]` | `cargo test` (70 tests) |
 | Helper ↔ real Xray ↔ local Xray "server" (9 protocol/transport/security combos, DNS, IDE endpoints, crash restart, failures, subscriptions) + security (isolation, listeners, hostile messages, unauthorized origins, tampered Xray, junctions, SSRF, malicious subscriptions, DLL planting) | `native/tests/integration.rs` | `cargo test` (13 tests; needs `native/xray/dist/<platform>`) |
 | Extension controller (proxy mirroring, fail-safe, takeover, allow-list, timeouts), view model, QR round-trip, manifest/CSP/bundle security scan | `extension/tests/*.test.ts` | `vitest` (47 tests) |
 | **Real browser**: installer → extension → native messaging → Xray → server; import, connect, 3 servers, DNS, IDE endpoint, crash, disconnect, no orphans, no stale proxy after restart | `extension/tests/e2e/browser.e2e.mjs` | `npm run test:e2e [-- --browser <path>] [--headed] [--screenshots <dir>]` |
@@ -81,10 +81,10 @@ therefore uses the debug helper.
 
 ## Changing things safely
 
-* **Protocol:** edit `native/src/protocol.rs` + `shared/protocol/types.ts` + `PROTOCOL.md`. Bump
+* **Protocol:** edit `native/src/browser/protocol.rs` + `shared/protocol/types.ts` + `PROTOCOL.md`. Bump
   `PROTOCOL_VERSION` in both `native/src/lib.rs` and `shared/protocol/types.ts` for incompatible changes.
-* **New transport:** add a `Transport` variant (`model.rs`), parse it in `parse/stream.rs` (and `json.rs`),
-  generate it in `xrayconf.rs`, add an inbound to the integration test server, and run the tests.
+* **New transport:** add a `Transport` variant (`core/profile.rs`), parse it in `core/import/stream.rs` (and `json.rs`),
+  generate it in `xray_config.rs`, add an inbound to the integration test server, and run the tests.
 * **Xray upgrade:** update `native/xray/xray.lock.json` (version + SHA-256 from the release `.dgst` files),
   run `node scripts/fetch-xray.mjs all`, run the full test suite, and check the release notes for removed
   config fields (see TD-4 in technical-decisions.md for how field support was verified with `xray run -test`).
@@ -98,6 +98,6 @@ therefore uses the debug helper.
 * **Xray upgrade checklist:**
   1. Update `version` and the zip `sha256` values (from the release `.dgst` files) in `native/xray/xray.lock.json`.
   2. Delete the `binarySha256` entries, then run `node scripts/fetch-xray.mjs --record all`.
-  3. Review `native/src/parse/fields.rs` against `infra/conf/*.go` at the new tag.
+  3. Review `native/src/core/import/fields.rs` against `infra/conf/*.go` at the new tag.
   4. Run all test suites.
 * **Security gate:** re-run the suites listed in [security-gate.md](security-gate.md) and update it for every release.

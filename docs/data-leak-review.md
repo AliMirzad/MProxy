@@ -10,8 +10,8 @@ runtime checks listed below.
 |---|---|---|
 | Extension (`extension/src`) | one `fetch`, of a `data:` URL (`popup/qr.ts`); no XHR, WebSocket, `sendBeacon`, `EventSource`, remote script, `setUninstallURL`, `identity`/`gcm` | no network egress |
 | Extension manifest | no `update_url`, `homepage_url`, content scripts, `externally_connectable`, web-accessible resources; CSP `connect-src 'self' data:` | **PASS: runtime verified**: CSP test + E2E (other origins blocked) |
-| Helper (`native/src`) | `reqwest` in `subscription.rs` only; `TcpStream` in `probe.rs` (loopback) and `ports.rs` (loopback); no UDP | subscription + health check only |
-| Xray config (`xrayconf.rs`) | outbounds: the selected server, `freedom` (private literals/localhost only), `blackhole`; no `dns`, `api`, `stats`, `observatory`, `metrics`, `reverse`; access log `none` | only the user's server |
+| Helper (`native/src`; Phase 6 paths) | `reqwest` in `core/subscription.rs` only; `TcpStream` in `core/probe.rs` (loopback) and `runtime/ports.rs` (loopback); no UDP. The browser adapter (`browser/`) opens no connections; the Phase 6 refactor added none (re-checked) | subscription + health check only |
+| Xray config (`core/xray_config.rs`) | outbounds: the selected server, `freedom` (private literals/localhost only), `blackhole`; no `dns`, `api`, `stats`, `observatory`, `metrics`, `reverse`; access log `none` | only the user's server |
 | Build scripts | `fetch-xray.mjs` (GitHub, pinned hashes); not part of the product | build time only |
 
 ## Classification

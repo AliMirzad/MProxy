@@ -10,7 +10,7 @@
 //! server into dozens of entries. Only VLESS/VMess outbounds are
 //! extracted. Every key of every object that is read is checked against the tables in
 //! `fields.rs`: unknown or dangerous keys reject the entry. The imported JSON is never executed
-//! or forwarded; the Xray config is regenerated from the normalized model (see `xrayconf.rs`).
+//! or forwarded; the Xray config is regenerated from the normalized model (see `xray_config.rs`).
 
 use super::fields::{self, check};
 use super::stream::{self, StreamParams};

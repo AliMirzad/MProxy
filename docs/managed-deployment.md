@@ -122,16 +122,21 @@ because the directory is admin-only. Missing file = personal mode.
 }
 ```
 
-Enforcement points:
+Enforcement points (Phase 6 layout, paths under `native/src`). Every rule is enforced **in the Core,
+below any client**: a modified or malicious UI (or a second client such as a future desktop app) calls
+the same Core API and cannot bypass it. See [core-api.md](core-api.md#policy-enforcement-point).
 
 | Control | Where it would be enforced |
 |---|---|
-| Approved extension IDs | `main.rs` origin check (in addition to `allowed_origins`) |
-| Trusted subscriptions only | `service.rs` import/subscription commands return `POLICY_DENIED` |
-| Server allowlist | `validate::address` + connect-time re-check |
-| Settings locks | `setSettings` rejects locked keys; UI shows them as managed |
-| Health-check target | `probe::default_targets` |
-| Pinned Xray | already compiled in. The policy can only confirm it, never change it |
+| Approved extension IDs | `main.rs` origin check (in addition to `allowed_origins`); a native-host concern, not a Core one |
+| Manual import disabled | `Core::import_profiles` (`core/api.rs`) returns `SecurityPolicyViolation` |
+| Trusted subscriptions only | `Core::add_subscription` / `Core::refresh_subscription` accept only policy URLs |
+| Server allowlist | `core/validate.rs` `address` at import, and the connect-time re-check in `Core::start_session` |
+| Settings locks (IDE auth, private subscription hosts) | `Core::update_settings` rejects locked keys; clients show them as managed |
+| WebRTC protection required | browser-side (the toggle lives in the extension): browser policy `WebRtcIPHandling`; the extension's fail-closed WebRTC check (F6) stays |
+| Health-check target | `core/probe.rs` `default_targets` |
+| Profile provenance | `ProfileSource` (`core/profile.rs`) gains a `Managed` variant for policy-delivered profiles |
+| Pinned Xray | already compiled in (`runtime/xray.rs`). The policy can only confirm it, never change it |
 | Signed binaries | OS/EDR (WDAC/AppLocker allow rules by publisher) |
 | Browser side | the policies above |
 

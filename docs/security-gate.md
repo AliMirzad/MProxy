@@ -15,8 +15,39 @@ for browser policies. Threat analysis: [threat-model.md](threat-model.md).
 | **FAIL** | known problem, with severity |
 | **NOT TESTED** | could have been run here but was not |
 | **ENVIRONMENT UNAVAILABLE** | needs hardware, rights or services this environment does not have |
+| **PASS: AUTOMATED TEST** (added in Phase 6) | unit / in-process test of the logic, no real OS boundary involved |
+| **BLOCKED BY ENDPOINT SECURITY: UNSIGNED BUILD** (added in Phase 6) | the release helper is removed by the company EDR before it can run |
 
-## Test suites
+## Phase 6 re-verification (2026-09-22, branch `phase-6-core-modularization`)
+
+The code was restructured into a Shared Core with the browser as a thin client
+([module-boundaries.md](module-boundaries.md)). Every suite below was **re-run on the refactored code**.
+Protection-by-protection mapping and verification levels are in
+[phase6-security-preservation.md](phase6-security-preservation.md).
+
+| Suite | Result after Phase 6 |
+|---|---|
+| Native unit | 84/84 (was 76; new: credentials, session, error, adapter mapping, config determinism) |
+| Architecture (layer rule, `tests/architecture.rs`) | 4/4 (new) |
+| Core API in-process (`tests/core_api.rs`) | 8/8 (new) |
+| Native integration (all Phase 5 adversarial tests through the new adapter → Core path) | 20/20 |
+| Extension | 56/56, typecheck clean |
+| Real-browser E2E | 82/82 |
+| Packaged runtime adversarial | 10/10; release helper execution **BLOCKED BY ENDPOINT SECURITY: UNSIGNED BUILD** |
+| Clippy (Windows x64, macOS arm64/x64) | clean |
+| `cargo audit` / `npm audit` | 0 / 0 (no dependency changes) |
+
+Every B-item below that was **PASS: runtime verified** in Phase 5 was re-verified by the same
+tests after the refactor. Nothing changed status, except:
+* the release-execution part of B19c is now reported as **BLOCKED BY ENDPOINT SECURITY: UNSIGNED BUILD**;
+* the intermittent integration failure is explained (test-environment load; serial runs 0/6 failures).
+
+Open items are unchanged:
+* **B9 / F7** (HIGH, unmanaged installs);
+* **B34 / F12** (unsigned, quarantined by EDR);
+* macOS (ENVIRONMENT UNAVAILABLE).
+
+## Test suites (Phase 5 gate)
 
 | Suite | Command | Result |
 |---|---|---|

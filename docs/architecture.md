@@ -34,12 +34,50 @@ tray icon, login item or Dock icon.
 | Path | Contents |
 |---|---|
 | `extension/` | MV3 extension: `src/background` (service worker, controller), `src/popup` (UI, QR), `src/shared` (view model), `manifest/`, `tests/` (vitest unit tests, `e2e/` real-browser test) |
-| `native/` | Rust helper: `src/parse` (importers), `validate.rs`, `xrayconf.rs`, `xray.rs` (process), `service.rs` (state machine), `store.rs`/`secrets.rs`, `install.rs`, `tests/integration.rs` |
+| `native/src/core/` | **Shared Core**: profiles, import pipeline, validation, network policy, subscriptions, trusted Xray config, credentials, session, error model, Core API (`api.rs`), store, secrets |
+| `native/src/runtime/` | Xray runtime boundary: pinned-hash verification, config test, restricted launch, supervision, ports |
+| `native/src/platform/` | OS security: Windows restricted token + job (`winproc.rs`), macOS Seatbelt (`macsandbox.rs`), ACLs/links (`harden.rs`), locations |
+| `native/src/browser/` | Browser client adapter: native-messaging framing, protocol v3, command → Core mapping, installer |
+| `native/tests/` | `integration.rs` (real helper over native messaging), `core_api.rs` (Core in-process), `architecture.rs` (layer rule) |
 | `native/xray/xray.lock.json` | Pinned Xray-core version + SHA-256 per platform |
 | `shared/protocol/` | Protocol spec + TypeScript types. `shared/extension-id.txt` holds the pinned extension ID |
 | `installers/` | Windows `Install.cmd`/`Uninstall.cmd`, macOS `install.sh`/`uninstall.sh`/`build-pkg.sh` |
 | `scripts/` | build/test/package tooling (Node, no extra deps) |
 | `docs/`, `LICENSES/` | Documentation, third-party licenses |
+
+## Code structure: Shared Core and thin clients (Phase 6)
+
+Before Phase 6 the helper was one flat crate whose `service.rs` was both the native-messaging
+dispatcher and the connection logic: it matched on the extension's `Request` enum, returned JSON
+shaped for the popup, put the browser credentials into its status JSON, and even the session's
+error state carried the wire type `protocol::ErrorCode`. The browser defined the architecture.
+
+Now the browser extension is the first *client* of a reusable Core:
+
+```text
+   Browser extension (MV3)                    [future] Desktop UI
+          │ native messaging (protocol v3)            │
+          ▼                                           ▼
+   browser::adapter  ── thin client adapters ──  [future] desktop adapter
+          │                                           │
+          └──────────────► core::api::Core ◄──────────┘
+                     profiles · import · validation · netpolicy · subscriptions
+                     trusted xray_config · session · credentials · error · store/secrets
+                                      │
+                               runtime::xray  (integrity, pre-run verification, launch, supervision)
+                                      │
+                   platform::{winproc, macsandbox, harden, paths}
+                                      │
+                                     Xray
+```
+
+Dependencies point downwards only. This is checked by `native/tests/architecture.rs`: the Core
+never names the browser adapter, the NM protocol, Chrome, `PROTOCOL_VERSION` or `HOST_NAME`; the runtime
+and platform never name the Core; nothing above the runtime starts processes. Details are in
+[module-boundaries.md](module-boundaries.md), the API in [core-api.md](core-api.md), and future clients in
+[future-desktop-architecture.md](future-desktop-architecture.md).
+
+The wire protocol (v3) did not change. The extension is untouched by Phase 6.
 
 ## Process lifetime
 
@@ -55,7 +93,11 @@ tray icon, login item or Dock icon.
 So the local proxy exists exactly as long as the browser runs. That is a deliberate trade-off
 (TD-2): no separate background application.
 
-## Connection state machine (helper)
+## Connection state machine (`core::session`)
+
+The Core's `SessionState` (Disconnected, Starting{Launching|Verifying|Restarting}, Connected, Stopping,
+Failed) is shown below with the names the browser protocol uses for it (`connecting` = Starting,
+`disconnecting` = Stopping, `error` = Failed).
 
 ```
 DISCONNECTED ──connect──▶ CONNECTING(starting) ──Xray listening──▶ CONNECTING(verifying)
@@ -69,7 +111,8 @@ DISCONNECTED ──connect──▶ CONNECTING(starting) ──Xray listening─
 
 * **starting:** build the config, run `xray run -test` (Xray's own validation), spawn, and wait until
   the browser port accepts connections. A port collision retries once with a new port.
-* **verifying:** an HTTP request through the local SOCKS5 inbound to
+* **verifying:** an HTTP request through the local authenticated HTTP inbound (with this connection's
+  credentials) to
   `www.gstatic.com/generate_204` (fallback `cp.cloudflare.com`), with the hostname sent
   unresolved. **Connected is only reported after this succeeds**, so it proves the whole
   path through the selected server.
@@ -178,7 +221,7 @@ fingerprint, certificate pinning, ECH)/REALITY (incl. Vision, spiderX, ML-DSA-65
 Encryption. Rejected with a clear message: HTTP/2 (`h2`) and QUIC (removed from Xray-core), mKCP, and
 non-VLESS/VMess protocols.
 Adding a transport means adding a `Transport` variant, a parse arm in `stream.rs`, and a generator arm in
-`xrayconf.rs`.
+`xray_config.rs`.
 
 ## Process isolation (summary)
 

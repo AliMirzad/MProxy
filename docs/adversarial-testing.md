@@ -122,11 +122,20 @@ Test: integration `ide_auth_adversarial`.
 * **Not** other users (private DACL / 0700) and **not** Xray (restricted token cannot read the data
   directory).
 
-Intermittent result: in 1 of 5 full parallel integration runs, `ide_endpoint_requires_password`
-failed an equality assertion. It passes alone (3/3) and in 3/3 later full runs. The likely cause is
-load from `ide_auth_adversarial`'s brute force running in parallel, which makes Xray's outbound dial
-fail (503) beyond the test's bounded retry. This is recorded as a test-stability issue. It is not
-evidence of an authentication failure: an accepted wrong credential would fail a different assertion.
+Intermittent result (Phase 5): in 1 of 5 full parallel integration runs, `ide_endpoint_requires_password`
+failed an equality assertion. Phase 5 attributed this to brute-force load.
+
+**Phase 6 investigation** ([phase6-security-preservation.md](phase6-security-preservation.md#flaky-test-investigation-ide_endpoint_requires_password)):
+* The failure is at *connect* (`SERVER_UNREACHABLE`, the probe got `503`), before any authentication
+  assertion. Other tunnel tests fail the same way, so it is **not an authentication defect**.
+* Two test-fixture defects were fixed:
+  * the target's RST-on-close with unread bytes (Windows);
+  * a single-target probe hook instead of production's two targets.
+* A use-after-free was found and fixed in the `sandbox_probe` fixture, along with alignment hardening
+  of the product's token reads.
+* Failed runs went from ~45% (7/16) to 1/15 in parallel, and **0/6 serially**. The remainder is
+  test-environment load (first request through a fresh VLESS-WebSocket tunnel under 20 concurrent
+  Xray pairs on an EDR-protected machine).
 
 ## 5. Hostile web page (item 7)
 
