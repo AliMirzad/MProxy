@@ -8,7 +8,8 @@
 //! * no downgrade redirects, at most 5 redirects
 //! * 10 s connect timeout, 20 s total timeout, 5 MiB body limit
 //! * a fixed product User-Agent; no cookies, no machine identifiers
-//! * fetched through the active tunnel when connected (`socks5h`, so DNS stays remote)
+//! * fetched through the active tunnel when connected: the browser's authenticated HTTP proxy
+//!   inbound with the per-connection credentials (CONNECT host:443, so DNS stays remote)
 
 use std::io::Read;
 use std::net::{SocketAddr, ToSocketAddrs};
@@ -89,11 +90,17 @@ pub fn display_host(u: &url::Url) -> String {
     u.host_str().unwrap_or("").to_string()
 }
 
-pub fn fetch(raw_url: &str, via_socks_port: Option<u16>, policy: &Policy) -> Result<String, String> {
-    fetch_with_timeout(raw_url, via_socks_port, policy, Duration::from_secs(20))
+/// The local tunnel inbound to fetch through: port and its per-connection credentials.
+pub struct Via {
+    pub port: u16,
+    pub auth: crate::xrayconf::IdeAuth,
 }
 
-pub fn fetch_with_timeout(raw_url: &str, via_socks_port: Option<u16>, policy: &Policy, timeout: Duration) -> Result<String, String> {
+pub fn fetch(raw_url: &str, via: Option<&Via>, policy: &Policy) -> Result<String, String> {
+    fetch_with_timeout(raw_url, via, policy, Duration::from_secs(20))
+}
+
+pub fn fetch_with_timeout(raw_url: &str, via: Option<&Via>, policy: &Policy, timeout: Duration) -> Result<String, String> {
     let u = validate_url(raw_url, policy)?;
     let pol = *policy;
     let redirect = reqwest::redirect::Policy::custom(move |attempt| {
@@ -111,8 +118,9 @@ pub fn fetch_with_timeout(raw_url: &str, via_socks_port: Option<u16>, policy: &P
         .redirect(redirect)
         .user_agent(USER_AGENT)
         .https_only(!http_allowed(&u));
-    if let Some(port) = via_socks_port {
-        let p = reqwest::Proxy::all(format!("socks5h://127.0.0.1:{port}")).map_err(|e| e.to_string())?;
+    if let Some(v) = via {
+        // HTTPS URLs go through CONNECT with the unresolved host name (DNS on the server).
+        let p = reqwest::Proxy::all(format!("http://127.0.0.1:{}", v.port)).map_err(|e| e.to_string())?.basic_auth(&v.auth.user, &v.auth.pass);
         b = b.proxy(p);
     } else {
         // Direct: no system/env proxy, and every DNS answer is checked against the policy.

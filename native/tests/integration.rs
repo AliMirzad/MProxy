@@ -1691,3 +1691,39 @@ fn malicious_subscription_corpus() {
     }
     assert_eq!(h.ok("getStatus", json!({}))["state"], "disconnected");
 }
+
+/// Regression: while connected, subscription fetches go through the tunnel's inbound, which is an
+/// authenticated HTTP proxy since protocol 3 (they used unauthenticated SOCKS before and failed).
+#[test]
+fn subscription_update_while_connected() {
+    let _ = require_xray!();
+    let e = env().unwrap();
+    let seen = Arc::new(Mutex::new(Vec::<String>::new()));
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    let sport = l.local_addr().unwrap().port();
+    let s2 = seen.clone();
+    let sub_body = format!("vless://{TEST_UUID}@sub-a.example.com:443?security=tls#SubA\n");
+    std::thread::spawn(move || {
+        for s in l.incoming().flatten() {
+            let mut s = s;
+            let mut buf = [0u8; 4096];
+            let n = s.read(&mut buf).unwrap_or(0);
+            s2.lock().unwrap().push(String::from_utf8_lossy(&buf[..n]).lines().next().unwrap_or("").to_string());
+            let _ = s.write_all(format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{sub_body}", sub_body.len()).as_bytes());
+        }
+    });
+    let o = opts(&e);
+    let mut h = Host::start(&o);
+    let (_, link) = links(&e).remove(1);
+    let imp = h.ok("importText", json!({"text": link, "source": "paste"}));
+    let st = h.connect_and_wait(imp["serverIds"][0].as_str().unwrap());
+    assert_eq!(st["state"], "connected", "{st}");
+    let r = h.req("addSubscription", json!({"name": "while connected", "url": format!("http://127.0.0.1:{sport}/sub")}));
+    assert_eq!(r["ok"], true, "subscription fetch through the tunnel failed: {r}");
+    assert_eq!(r["result"]["added"], 1, "{r}");
+    let id = r["result"]["subscriptionId"].as_str().unwrap().to_string();
+    let r = h.req("updateSubscription", json!({"id": id}));
+    assert_eq!(r["ok"], true, "{r}");
+    assert_eq!(seen.lock().unwrap().len(), 2);
+    assert_eq!(h.ok("getStatus", json!({}))["state"], "connected");
+}

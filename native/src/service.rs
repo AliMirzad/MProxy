@@ -352,19 +352,19 @@ impl Service {
         }))
     }
 
-    fn tunnel_port(&self) -> Option<u16> {
+    fn tunnel_via(&self) -> Option<crate::subscription::Via> {
         match (&self.state, &self.mode) {
-            (ConnState::Connected { .. }, Mode::Tunnel { port, .. }) => Some(*port),
+            (ConnState::Connected { .. }, Mode::Tunnel { port, auth, .. }) => Some(crate::subscription::Via { port: *port, auth: auth.clone() }),
             _ => None,
         }
     }
 
     fn spawn_subscription(&self, req_id: u32, job: SubJob) {
         let tx = self.tx.clone();
-        let via = self.tunnel_port();
+        let via = self.tunnel_via();
         let policy = self.subscription_policy();
         std::thread::spawn(move || {
-            let result = crate::subscription::fetch(&job.url, via, &policy);
+            let result = crate::subscription::fetch(&job.url, via.as_ref(), &policy);
             let _ = tx.send(Msg::SubscriptionDone { req_id, job, result });
         });
     }

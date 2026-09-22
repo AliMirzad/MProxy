@@ -67,7 +67,7 @@ cpSync(hostBin, join(stage, exe));
 // Optional code signing of the helper (see docs/installation.md, "Code signing"). Xray is never
 // re-signed: its pinned SHA-256 covers the official, unmodified file.
 if (win && process.env.PRIVATE_PROXY_SIGN_THUMBPRINT) {
-  run(join(process.env.SystemRoot || "C:\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe"), [
+  run(join(process.env.SystemRoot || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe"), [
     "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", join(root, "scripts/sign-windows.ps1"),
     "-File", join(stage, exe), "-Thumbprint", process.env.PRIVATE_PROXY_SIGN_THUMBPRINT,
     ...(process.env.PRIVATE_PROXY_SIGN_TIMESTAMP ? ["-TimestampServer", process.env.PRIVATE_PROXY_SIGN_TIMESTAMP] : []),

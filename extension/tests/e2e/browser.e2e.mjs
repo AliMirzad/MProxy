@@ -119,7 +119,7 @@ const browserPath = findBrowser();
 // including its final "uninstall --purge": the test's data dir has its own credential entry.
 const realKeyPresent = () =>
   process.platform !== 'win32' ||
-  /secrets-data-key.com.privateproxy.host/i.test(spawnSync(join(process.env.SystemRoot || 'C:\Windows', 'System32', 'cmdkey.exe'), ['/list'], { encoding: 'utf8' }).stdout || '');
+  /secrets-data-key.com.privateproxy.host/i.test(spawnSync(join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'cmdkey.exe'), ['/list'], { encoding: 'utf8' }).stdout || '');
 const realKeyBefore = realKeyPresent();
 const env = { ...process.env, PRIVATE_PROXY_TEST_MODE: '1', PRIVATE_PROXY_ALLOW_LOOPBACK: '1', PRIVATE_PROXY_DATA_DIR: dataDir };
 let server;
@@ -374,7 +374,7 @@ try {
     const d0 = await popup.evaluate(() => chrome.runtime.sendMessage({ type: 'request', cmd: 'getDiagnostics', args: {} }));
     check('installed Xray verified against the pinned SHA-256', d0.result.xrayVerified === true);
     if (process.platform === 'win32') {
-      const creds = spawnSync(join(process.env.SystemRoot || 'C:\Windows', 'System32', 'cmdkey.exe'), ['/list'], { encoding: 'utf8' }).stdout || '';
+      const creds = spawnSync(join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'cmdkey.exe'), ['/list'], { encoding: 'utf8' }).stdout || '';
       check('test data key is stored under its own credential name, not the real one', /secrets-data-key-[0-9a-f]{16}.com.privateproxy.host/i.test(creds) && realKeyPresent() === realKeyBefore);
     }
     if (process.platform === 'win32') {
