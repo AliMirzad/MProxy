@@ -79,6 +79,18 @@ and platform never name the Core; nothing above the runtime starts processes. De
 
 The wire protocol (v3) did not change. The extension is untouched by Phase 6.
 
+### Per-application routing (Phase 7)
+
+| Part | Label |
+|---|---|
+| Browser client, Shared Core, runtime, platform (above) | **PRODUCTION** |
+| `experimental/per-app-routing-poc/` (app-configured launcher, user-mode WFP enforcement, harness) | **EXPERIMENTAL**: a separate crate, never built by packaging (`package.mjs` refuses it) |
+| WFP connect-redirect callout driver (true per-process routing on Windows) | **RESEARCH ONLY / NOT IMPLEMENTED** |
+| macOS `NETransparentProxyProvider` system extension | **RESEARCH ONLY / NOT IMPLEMENTED** |
+
+The product Core does not call any routing provider, and `RuntimeCapabilities.application_routing`
+is `false`. Findings and the recommendation are in [per-app-routing-decision.md](per-app-routing-decision.md).
+
 ## Process lifetime
 
 1. The browser starts → the service worker starts (`runtime.onStartup`) → it **clears** any

@@ -18,6 +18,23 @@ for browser policies. Threat analysis: [threat-model.md](threat-model.md).
 | **PASS: AUTOMATED TEST** (added in Phase 6) | unit / in-process test of the logic, no real OS boundary involved |
 | **BLOCKED BY ENDPOINT SECURITY: UNSIGNED BUILD** (added in Phase 6) | the release helper is removed by the company EDR before it can run |
 
+## Phase 7 per-app routing research (branch `phase-7-per-app-routing-poc`)
+
+Additional statuses used: **RESEARCH ONLY**, **EXPERIMENTAL**. The product is unchanged: no routing
+code runs in the browser product. Full results: [per-app-routing-decision.md](per-app-routing-decision.md).
+
+| Property (experimental PoC) | Status |
+|---|---|
+| Selected app that honours a proxy setting → through Xray; control app direct | PASS: RUNTIME VERIFIED (S1–S3, R1/R2, R4) |
+| Selected app without proxy support is routed | **FAIL**: silent direct bypass (S4, R3); true routing needs a WFP callout driver: ENVIRONMENT UNAVAILABLE |
+| Selected app: no direct IPv4/IPv6/UDP/DNS | **FAIL** with app-configuration alone (S5–S8); WFP enforcement written, **NOT TESTED** (needs admin) |
+| Chromium/Electron app through the authenticated inbound | **FAIL**: cannot answer 407 (R5) |
+| Unrelated child not proxied | **FAIL** with environment inheritance (C3) |
+| Fail closed when Xray or the helper dies (cooperating apps) | PASS: RUNTIME VERIFIED (F1–F3) |
+| No system side effects (proxy, routes, DNS, adapters, firewall rules, drivers, services) | PASS: RUNTIME VERIFIED (snapshots identical) |
+| Normal user cannot add WFP filters | PASS: RUNTIME VERIFIED (`ERROR_ACCESS_DENIED`) |
+| macOS per-app routing | RESEARCH ONLY; ENVIRONMENT UNAVAILABLE |
+
 ## Phase 6 re-verification (2026-09-22, branch `phase-6-core-modularization`)
 
 The code was restructured into a Shared Core with the browser as a thin client

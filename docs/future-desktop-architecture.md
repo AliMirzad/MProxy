@@ -98,3 +98,19 @@ child tracking exists in Phase 6.
 
 The same policy enforcement point (`Core` methods) applies to the desktop client, so managed
 restrictions hold for every client ([core-api.md](core-api.md#policy-enforcement-point)).
+
+## Phase 7 findings (EXPERIMENTAL / RESEARCH ONLY)
+
+Phase 7 researched and prototyped the routing seam; see
+[per-app-routing-decision.md](per-app-routing-decision.md). What changed in this document's assumptions:
+
+| Assumption (Phase 6) | Phase 7 evidence | Status |
+|---|---|---|
+| Apply routing after `Connected` | wrong order for fail-closed: `prepare` (block selected apps) must happen **before** Xray starts; `Connected` only after routing is Active and verified | RESEARCH ONLY |
+| `ApplicationRoutingProvider { capabilities, apply, remove }` | refined to `capabilities / prepare / activate / state / deactivate` | EXPERIMENTAL (`experimental/per-app-routing-poc`) |
+| `include_child_processes: bool` | a bool is not enough: `ExplicitOnly` / `KnownToolchain`; unbounded tree inheritance proxies unrelated programs (runtime C3) | EXPERIMENTAL evidence |
+| `ExecutableIdentity` | path + publisher signature (Windows) / Team ID + code signature (macOS); path or hash alone is unsafe | RESEARCH ONLY |
+| Windows mechanism "WFP / redirect drivers" | true per-process routing = WFP connect-redirect **callout driver** (EV + Microsoft signing); user-mode WFP can only **block** | RESEARCH ONLY; driver NOT IMPLEMENTED |
+| macOS mechanism "Network Extension" | `NETransparentProxyProvider` system extension (entitlement, Developer ID); per-app VPN needs MDM | RESEARCH ONLY |
+
+`RuntimeCapabilities.application_routing` remains **false** in the product. Nothing of Phase 7 is PRODUCTION.

@@ -84,3 +84,16 @@ macOS runtime isolation: **IMPLEMENTED / CODE REVIEWED. REAL HARDWARE VERIFICATI
 The Seatbelt mechanism (`sandbox-exec`) is deprecated. It is isolated in `platform/macsandbox.rs`
 (and its use in `runtime/xray.rs`), so replacing it, e.g. with an App-Sandbox-signed Xray, does not
 touch the Core. The fail-closed rule stays: no sandbox, no connection.
+
+## Per-application routing boundary (Phase 7: EXPERIMENTAL, not in the product)
+
+```text
+selected app ──(its own proxy setting)──► authenticated loopback inbound ──► Xray   [EXPERIMENTAL: W6]
+selected app ──(anything else)──────────► WFP BLOCK (dynamic session, per user)    [EXPERIMENTAL: W5, needs admin; NOT TESTED]
+unselected apps ────────────────────────► unchanged system path                    [runtime: system snapshot unchanged]
+arbitrary app without proxy support ────► needs a WFP redirect callout driver      [RESEARCH ONLY]
+```
+
+The boundary between a future privileged routing service and the user session is a fixed command
+set over an ACL'd IPC channel ([per-app-routing-corporate-impact.md](per-app-routing-corporate-impact.md)).
+It does not exist in code yet.

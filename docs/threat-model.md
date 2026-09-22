@@ -178,3 +178,23 @@ ACG, signed-only images and Win32k lockdown are still not applied (EDR hook comp
 | Server stops forwarding | requests fail | stays "Connected" (no periodic probe) |
 
 There is no kill switch: after a failure the browser goes direct and says so.
+
+## Per-application routing (Phase 7: EXPERIMENTAL / RESEARCH ONLY, not in the product)
+
+Nothing below ships. It frames the design of a future desktop client; evidence is in
+[per-app-routing-decision.md](per-app-routing-decision.md).
+
+| Actor / event | Risk | Mitigation (design) | Evidence |
+|---|---|---|---|
+| Malicious **selected** app | uses the tunnel for anything; exfiltrates through the company server | inherent: the user selected it; server-side policy; per-app inbound so traffic is attributable | design |
+| Malicious **unselected** app | connects to the selected app's local inbound to ride the tunnel | authenticated inbound (PoC); for credential-less Chromium apps, WFP BLOCK of `connect 127.0.0.1:<port>` for every app except the selected one | auth: runtime (R5/F2); WFP restriction NOT TESTED |
+| Malicious local process, same user | reads proxy credentials from a selected app's environment; swaps a user-writable executable at a selected path | publisher-signature binding re-checked per process; per-app inbounds; environment-based configuration only for cooperative tools | env exposure and path semantics: runtime/code review |
+| App identity spoofing | another binary at the selected path, or claiming a bundle ID | bind to path + Authenticode signer (Windows) / Team ID + audit-token code signature (macOS); never name-only | code review |
+| Executable replacement (TOCTOU) | approved file replaced after the check | file-identity + signer re-verification by the privileged service at process start | PoC re-hash before launch only |
+| Routing-rule tampering | another admin tool removes/overrides our WFP filters | BLOCK in our own sublayer wins over other sublayers' PERMITs; a driver's hard permit/veto can override; the service monitors its filters | code review |
+| Privileged routing service compromise | a service API becomes a generic firewall/process tool | fixed command set, validated targets only, user-scoped filters, no command execution | design (corporate-impact doc) |
+| Stale routing state | filters or routes left after a crash block or leak traffic | dynamic WFP session (auto-removed on crash); no route/DNS changes; driver design must be session-scoped | dynamic-session semantics documented; no persistent state created by the PoC (system snapshot unchanged) |
+| Malicious child process | unrelated program inherits routing (C3), or a child bypasses (C2) | no unbounded process-tree inheritance; explicit executable allowlist | **runtime: C2/C3 both observed** |
+| Xray crash | selected apps fall back to direct | cooperating apps fail closed (connection refused); non-cooperating ones need WFP blocking | runtime F1–F3 |
+| Routing component crash | dynamic filters vanish (fail open) or persistent filters strand (fail closed) | explicit policy choice; corporate mode prefers fail-closed persistent filters owned by a service | design |
+| Other users on the machine | filters apply machine-wide | `ALE_USER_ID` condition per user | code; NOT TESTED (single-user machine) |
