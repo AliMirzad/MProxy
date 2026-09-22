@@ -1,0 +1,32 @@
+# EXPERIMENTAL — Phase 7 per-application routing proof of concept.
+# Not part of the product: not built by scripts/package.mjs, never shipped. See README.md.
+[package]
+name = "per-app-routing-poc"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "poc-harness"
+path = "src/bin/poc-harness.rs"
+
+[[bin]]
+name = "poc-client"
+path = "src/bin/poc-client.rs"
+
+[dependencies]
+# The Shared Core (debug build: its test hooks are active only in debug + PRIVATE_PROXY_TEST_MODE=1).
+ppcore = { package = "private-proxy-host", path = "../../native" }
+serde_json = "1"
+base64 = "0.22"
+sha2 = "0.10"
+
+# Same windows-sys version the product already locks; only extra feature flags (no new crates).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_Security_Authorization",
+  "Win32_System_Rpc",
+  "Win32_NetworkManagement_WindowsFilteringPlatform",
+] }

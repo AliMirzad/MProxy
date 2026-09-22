@@ -138,7 +138,7 @@ function sha256(file) {
 function assertNoTestArtifacts(dir) {
   const walk = (d) => readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(d, e.name)) : [join(d, e.name)]));
   for (const f of walk(dir)) {
-    if (/sandbox_probe|fixtures|attacker|malicious|impersonator/i.test(f.slice(dir.length))) throw new Error(`test artifact in release: ${f}`);
+    if (/sandbox_probe|fixtures|attacker|malicious|impersonator|experimental|poc-harness|poc-client|per-app-routing/i.test(f.slice(dir.length))) throw new Error(`test artifact in release: ${f}`);
     if (readFileSync(f).includes('PP-ADVERSARIAL-FIXTURE')) throw new Error(`adversarial fixture content in release: ${f}`);
   }
 }
