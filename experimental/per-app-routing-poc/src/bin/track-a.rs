@@ -43,14 +43,40 @@ fn lan_ipv4() -> Option<IpAddr> {
     (!ip.is_loopback() && !ip.is_unspecified()).then_some(ip)
 }
 
+static LOG: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// Console + log file (<report>.log): the evidence survives a failure and does not depend on how
+/// the shell redirects output.
+fn log(line: &str) {
+    println!("{line}");
+    if let Some(p) = LOG.get() {
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(p) {
+            let _ = writeln!(f, "{line}");
+        }
+    }
+}
+
 struct Report {
     rows: Vec<Value>,
+    path: Option<PathBuf>,
+    meta: Value,
 }
 
 impl Report {
     fn add(&mut self, id: &str, scenario: &str, expected: &str, observed: Value, evidence: &str, status: &str) {
-        println!("{status:<34} {id:<4} {scenario}");
+        log(&format!("{status:<34} {id:<4} {scenario}"));
         self.rows.push(json!({ "id": id, "scenario": scenario, "expected": expected, "actual": observed, "evidence": evidence, "status": status }));
+        self.save(false);
+    }
+    /// Written after every scenario, so a partial run still leaves its evidence.
+    fn save(&self, complete: bool) {
+        if let Some(p) = &self.path {
+            let mut v = self.meta.clone();
+            v["complete"] = json!(complete);
+            v["scenarios"] = json!(self.rows);
+            let _ = std::fs::write(p, serde_json::to_string_pretty(&v).unwrap_or_default());
+        }
     }
 }
 
@@ -80,26 +106,43 @@ fn main() {
     std::env::set_var("PRIVATE_PROXY_TEST_MODE", "1");
     std::env::set_var("PRIVATE_PROXY_ALLOW_LOOPBACK", "1");
     let report_path = args.iter().position(|a| a == "--report").and_then(|i| args.get(i + 1)).map(PathBuf::from);
+    if let Some(p) = &report_path {
+        let lp = p.with_extension("log");
+        let _ = std::fs::remove_file(&lp);
+        let _ = LOG.set(lp);
+    }
+    std::panic::set_hook(Box::new(|info| {
+        let loc = info.location().map(|l| format!("{}:{}", l.file(), l.line())).unwrap_or_default();
+        let msg = info.payload().downcast_ref::<&str>().map(|s| s.to_string()).or_else(|| info.payload().downcast_ref::<String>().cloned()).unwrap_or_default();
+        log(&format!("PANIC at {loc}: {msg}"));
+    }));
     let elevated = is_elevated();
-    println!("elevated: {elevated}");
+    log(&format!("elevated: {elevated}"));
     let tmp = std::env::temp_dir().join(format!("track-a-{}", std::process::id()));
     std::fs::create_dir_all(&tmp).unwrap();
-    let mut r = Report { rows: Vec::new() };
+    let mut r = Report { rows: Vec::new(), path: report_path.clone(), meta: json!({ "elevated": elevated }) };
+    r.save(false);
 
     // ---- environment
+    log("step: local HTTP target");
     let tport = start_target();
     std::env::set_var("PRIVATE_PROXY_PROBE_URL", format!("probe.test:{tport}/generate_204"));
+    log("step: test Xray server");
     let (mut server, sport) = start_server();
     let lan = lan_ipv4().expect("no LAN IPv4 address: cannot build the controlled non-loopback listeners");
+    log(&format!("step: controlled listeners on {lan}"));
     let lan_tcp = tcp_listener(SocketAddr::new(lan, 0)).unwrap();
     let lan_udp = udp_listener(SocketAddr::new(lan, 0)).unwrap();
     let v6_loop = tcp_listener("[::1]:0".parse().unwrap()).unwrap();
+    log("step: system snapshot (before)");
     let before = snapshot(elevated);
 
     let client = std::env::current_exe().unwrap().with_file_name("poc-client.exe");
     let control = tmp.join("poc-control.exe"); // identical bytes, different path: unselected
     std::fs::copy(&client, &control).unwrap();
+    log("step: Shared Core session (restricted Xray)");
     let mut session = Session::start(sport, &tmp.join("core"));
+    log("step: session connected");
     let ep = session.endpoint();
     let proxy_env = vec![("HTTP_PROXY", format!("http://{}:{}@127.0.0.1:{}", ep.user, ep.pass, ep.port)), ("NO_PROXY", "localhost,127.0.0.1,::1".to_string())];
     let probe_url = |l: &str| format!("http://probe.test:{tport}/{l}");
@@ -314,11 +357,11 @@ fn main() {
     r.add("T18", "after normal shutdown: selected app direct again, no WFP objects left", "restored", json!({"client": v, "wfpAfter": after_snap.get("wfpPocObjects")}), "runtime",
         if !enforced { "NOT TESTED: WFP NOT ACTIVE" } else if restored && after_snap.get("wfpPocObjects").is_some_and(|s| s.ends_with(": 0")) { "PASS: RUNTIME VERIFIED" } else { "FAIL" });
 
-    let report = json!({ "elevated": elevated, "wfpActive": enforced, "lan": lan.to_string(), "systemSideEffects": side, "scenarios": r.rows });
+    let report = json!({ "complete": true, "elevated": elevated, "wfpActive": enforced, "lan": lan.to_string(), "systemSideEffects": side, "scenarios": r.rows });
     println!("{}", serde_json::to_string_pretty(&report["systemSideEffects"]).unwrap());
     if let Some(p) = report_path {
         std::fs::write(&p, serde_json::to_string_pretty(&report).unwrap()).unwrap();
-        println!("report: {}", p.display());
+        log(&format!("report: {} (complete)", p.display()));
     }
     let _ = std::fs::remove_dir_all(&tmp);
 }
