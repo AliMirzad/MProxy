@@ -141,14 +141,17 @@ fn nul() -> io::Result<Handle> {
 }
 
 /// Token buffer (TOKEN_USER, TOKEN_MANDATORY_LABEL, TOKEN_PRIVILEGES, ...) of `class`.
-fn token_info(tok: HANDLE, class: TOKEN_INFORMATION_CLASS) -> Option<Vec<u8>> {
+/// Token information in an 8-byte-aligned buffer: the result is read through TOKEN_* structs
+/// (pointer fields, u64 LUIDs), which a Vec<u8> does not guarantee alignment for. The SID pointers
+/// inside point into this buffer, so it must outlive every use.
+fn token_info(tok: HANDLE, class: TOKEN_INFORMATION_CLASS) -> Option<Vec<u64>> {
     unsafe {
         let mut len = 0u32;
         GetTokenInformation(tok, class, std::ptr::null_mut(), 0, &mut len);
         if len == 0 {
             return None;
         }
-        let mut buf = vec![0u8; len as usize];
+        let mut buf = vec![0u64; (len as usize).div_ceil(8)];
         (GetTokenInformation(tok, class, buf.as_mut_ptr() as *mut _, len, &mut len) != 0).then_some(buf)
     }
 }

@@ -28,12 +28,15 @@ fn main() {
         }
         // GetCurrentProcessToken() pseudo-handle: always queryable.
         let tok: HANDLE = -4isize as HANDLE;
-        let info = |class: TOKEN_INFORMATION_CLASS| -> Vec<u8> {
+        // Returns the aligned buffer itself: SID pointers inside the result point into it, so a
+        // copy would leave them dangling (that use-after-free made integrityRid read garbage now
+        // and then; found in Phase 6).
+        let info = |class: TOKEN_INFORMATION_CLASS| -> Vec<u64> {
             let mut len = 0u32;
             GetTokenInformation(tok, class, std::ptr::null_mut(), 0, &mut len);
             let mut b = vec![0u64; (len as usize).div_ceil(8).max(1)];
             GetTokenInformation(tok, class, b.as_mut_ptr() as *mut _, len, &mut len);
-            b.into_iter().flat_map(u64::to_ne_bytes).collect()
+            b
         };
         let il = info(TokenIntegrityLevel);
         let label = &*(il.as_ptr() as *const TOKEN_MANDATORY_LABEL);
