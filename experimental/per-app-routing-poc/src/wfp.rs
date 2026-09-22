@@ -81,10 +81,19 @@ impl WfpEnforcement {
         let mut engine: HANDLE = std::ptr::null_mut();
         trace("FwpmEngineOpen0 …");
         let rc = unsafe { FwpmEngineOpen0(std::ptr::null(), RPC_C_AUTHN_WINNT, std::ptr::null(), &session, &mut engine) };
+        trace(&format!("FwpmEngineOpen0 = {rc:#x}"));
         if rc != 0 {
             return Err(format!("FwpmEngineOpen0: {}", describe(rc)));
         }
-        let sid = current_user_sid()?;
+        trace("current_user_sid (whoami.exe /user) …");
+        let sid = match current_user_sid() {
+            Ok(s) => s,
+            Err(e) => {
+                unsafe { FwpmEngineClose0(engine) };
+                return Err(e);
+            }
+        };
+        trace("current_user_sid ok; ConvertStringSecurityDescriptorToSecurityDescriptorW …");
         let sddl = wide(&format!("O:LSD:(A;;CC;;;{sid})"));
         let mut sd: PSECURITY_DESCRIPTOR = std::ptr::null_mut();
         if unsafe { ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl.as_ptr(), 1, &mut sd, std::ptr::null_mut()) } == 0 {
@@ -92,6 +101,7 @@ impl WfpEnforcement {
             return Err("cannot build the user security descriptor".into());
         }
         let len = unsafe { GetSecurityDescriptorLength(sd) };
+        trace(&format!("security descriptor ok ({len} bytes)"));
         let user_sd_blob = Box::new(FWP_BYTE_BLOB { size: len, data: sd as *mut u8 });
         Ok(WfpEnforcement { engine, sublayer: session_guid(), app_ids: Vec::new(), user_sd: sd, user_sd_blob, filters: Vec::new(), state: RoutingState::Inactive })
     }

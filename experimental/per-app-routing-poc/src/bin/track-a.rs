@@ -2,6 +2,7 @@
 //! (app-configured proxy + user-mode WFP BLOCK filters in a dynamic session).
 //!
 //!   track-a [--report <file.json>]          run everything possible; WFP parts need an elevated shell
+//!   track-a --report <file> --wfp-cycle <n>   lifecycle-only diagnostic (open/close N sessions)
 //!   track-a --enforcer-child <exe>          (internal) hold a WFP session for <exe> until killed
 //!
 //! Ground truth is observed, never assumed:
@@ -119,6 +120,25 @@ fn main() {
     }));
     let elevated = is_elevated();
     log(&format!("elevated: {elevated}"));
+    // Lifecycle-only diagnostic: open → prepare → activate → drop, N times in one process, no network
+    // tests. Separates a WFP lifecycle defect (fails regardless) from an external termination.
+    #[cfg(windows)]
+    if let Some(i) = args.iter().position(|a| a == "--wfp-cycle") {
+        let n: u32 = args.get(i + 1).and_then(|v| v.parse().ok()).unwrap_or(3);
+        let me = std::env::current_exe().unwrap();
+        for k in 1..=n {
+            log(&format!("cycle {k}/{n}: open"));
+            match enforce(&[&me]) {
+                Ok(w) => {
+                    log(&format!("cycle {k}/{n}: active, {} filters; drop", w.filter_count()));
+                    drop(w);
+                }
+                Err(e) => log(&format!("cycle {k}/{n}: error {e}")),
+            }
+        }
+        log(&format!("cycle: done, WFP objects left: {}", if elevated { wfp_poc_objects() } else { "NOT AVAILABLE".into() }));
+        return;
+    }
     let tmp = std::env::temp_dir().join(format!("track-a-{}", std::process::id()));
     std::fs::create_dir_all(&tmp).unwrap();
     let mut r = Report { rows: Vec::new(), path: report_path.clone(), meta: json!({ "elevated": elevated }) };
@@ -268,30 +288,6 @@ fn main() {
     } else { "FAIL / UNEXPECTED" };
     r.add("T13", "children with include_children=false (child of same path vs other path)", "defined", json!({"sameExeChild": same, "otherExeChild": other, "listenerHits": hits}), "runtime", st);
 
-    // ---- T14 include_children=true, prototype = explicit allowlist of the child's executable
-    #[cfg(windows)]
-    let st14 = if enforced {
-        log("step: T14 drop first WFP session");
-        drop(wfp.take_ok());
-        log("step: T14 open session for [client, control]");
-        let w2 = enforce(&[&client, &control]);
-        log(&format!("step: T14 session ok = {}", w2.is_ok()));
-        let h = tcp_hits();
-        let other = plain(&client, &["exec", &control.display().to_string(), "tcp", &lan_tcp_s]);
-        std::thread::sleep(Duration::from_millis(200));
-        let ok = os(&other["child"]) == Some(BLOCKED) && tcp_hits() == h;
-        log("step: T14 drop two-target session");
-        drop(w2);
-        log("step: T14 re-open single-target session");
-        wfp = enforce(&[&client]);
-        (json!({"otherExeChild": other}), if ok { "PASS: RUNTIME VERIFIED (only by listing the child's executable explicitly)" } else { "FAIL" })
-    } else {
-        (json!(null), nt)
-    };
-    #[cfg(not(windows))]
-    let st14 = (json!(null), nt);
-    r.add("T14", "include_children=true, prototype: explicit executable allowlist", "child BLOCKED", st14.0, "runtime", st14.1);
-
     // ---- T15 negative child: selected → cmd.exe → curl.exe (unrelated, unselected)
     let h = tcp_hits();
     let v = plain(&client, &["shell-child", &format!("http://{lan_tcp_s}/neg")]);
@@ -314,6 +310,29 @@ fn main() {
     let st = if !ok_proxy { "FAIL" } else if direct_status.starts_with("PASS") { "PASS: RUNTIME VERIFIED (no direct fallback)" } else { direct_status };
     r.add("T16", "Xray killed: selected app has no direct Internet, then recovers", "NO DIRECT; recovery", json!({"proxyDuringCrash": during_proxy, "directDuringCrash": during_direct, "restarted": restarted, "proxyAfter": after}), "runtime", st);
 
+    // ---- performance: request latency through the proxy vs direct, inside the client
+    let avg = |v: &[Value]| v.iter().filter_map(|x| x["ms"].as_u64()).sum::<u64>() as f64 / v.len().max(1) as f64;
+    let prox: Vec<Value> = (0..20).map(|i| with_env(&client, &["http", &probe_url(&format!("p{i}"))], &proxy_env)).collect();
+    let dir: Vec<Value> = (0..20).map(|i| plain(&control, &["raw", &format!("http://127.0.0.1:{tport}/d{i}")])).collect();
+    r.add("X1", "latency: selected via proxy vs direct (local test server)", "observation", json!({"proxyMs": avg(&prox), "directMs": avg(&dir), "wfpActive": enforced}), "runtime", "OBSERVED");
+
+    // ---- T18 normal cleanup of the main session (before T14/T17, which open further WFP sessions)
+    #[cfg(windows)]
+    drop(wfp.take_ok());
+    std::thread::sleep(Duration::from_millis(500));
+    let h = tcp_hits();
+    let v = plain(&client, &["tcp", &lan_tcp_s]);
+    std::thread::sleep(Duration::from_millis(200));
+    let restored = v["result"] == "connected" && tcp_hits() == h + 1;
+    let wfp_left = if elevated { wfp_poc_objects() } else { "NOT AVAILABLE".into() };
+    r.add("T18", "after normal teardown: selected app direct again, no WFP objects left", "restored", json!({"client": v, "wfpAfter": wfp_left}), "runtime",
+        if !enforced { "NOT TESTED: WFP NOT ACTIVE" } else if restored && wfp_left.ends_with(": 0") { "PASS: RUNTIME VERIFIED" } else { "FAIL" });
+
+    // T14 and T17 open further WFP sessions. In elevated runs on this machine, Kaspersky Endpoint
+    // Security logged event 4662 against this binary at the moment a second session was opened and
+    // the process ended (see docs/windows-routing-validation.md). They run last so a termination
+    // cannot hide the results above; it is recorded, never worked around.
+    log("step: T17/T14 (T17: session in a child process; T14: a further session in this process)");
     // ---- T17 helper (enforcer) crash: dynamic session vanishes
     #[cfg(windows)]
     let t17 = if enforced {
@@ -331,7 +350,6 @@ fn main() {
         let after_kill = plain(&client, &["tcp", &lan_tcp_s]);
         std::thread::sleep(Duration::from_millis(200));
         let reopened = after_kill["result"] == "connected" && tcp_hits() == h + 1;
-        wfp = enforce(&[&client]);
         (json!({"enforcer": line.trim(), "whileAlive": while_alive, "afterKill": after_kill}),
          if blocked_alive && reopened { "OBSERVED: filters removed automatically on crash → selected app FAILS OPEN" } else if blocked_alive { "OBSERVED: still blocked after crash" } else { "FAIL" })
     } else {
@@ -341,27 +359,34 @@ fn main() {
     let t17 = (json!(null), nt);
     r.add("T17", "helper/enforcer crash-killed (taskkill /F)", "defined (dynamic session)", t17.0, "runtime", t17.1);
 
-    // ---- performance: request latency through the proxy vs direct, inside the client
-    let avg = |v: &[Value]| v.iter().filter_map(|x| x["ms"].as_u64()).sum::<u64>() as f64 / v.len().max(1) as f64;
-    let prox: Vec<Value> = (0..20).map(|i| with_env(&client, &["http", &probe_url(&format!("p{i}"))], &proxy_env)).collect();
-    let dir: Vec<Value> = (0..20).map(|i| plain(&control, &["raw", &format!("http://127.0.0.1:{tport}/d{i}")])).collect();
-    r.add("X1", "latency: selected via proxy vs direct (local test server)", "observation", json!({"proxyMs": avg(&prox), "directMs": avg(&dir), "wfpActive": enforced}), "runtime", "OBSERVED");
+    // ---- T14 include_children=true, prototype = explicit allowlist of the child's executable
+    #[cfg(windows)]
+    let st14 = if enforced {
+        log("step: T14 open a further session in this process for [client, control]");
+        let w2 = enforce(&[&client, &control]);
+        log(&format!("step: T14 session ok = {}", w2.is_ok()));
+        let h = tcp_hits();
+        let other = plain(&client, &["exec", &control.display().to_string(), "tcp", &lan_tcp_s]);
+        std::thread::sleep(Duration::from_millis(200));
+        let ok = os(&other["child"]) == Some(BLOCKED) && tcp_hits() == h;
+        log("step: T14 drop two-target session");
+        drop(w2);
+        (json!({"otherExeChild": other}), if ok { "PASS: RUNTIME VERIFIED (only by listing the child's executable explicitly)" } else { "FAIL" })
+    } else {
+        (json!(null), nt)
+    };
+    #[cfg(not(windows))]
+    let st14 = (json!(null), nt);
+    r.add("T14", "include_children=true, prototype: explicit executable allowlist", "child BLOCKED", st14.0, "runtime", st14.1);
 
-    // ---- T18 normal cleanup
+    // ---- final teardown and system snapshot
     #[cfg(windows)]
     drop(wfp);
-    std::thread::sleep(Duration::from_millis(500));
-    let h = tcp_hits();
-    let v = plain(&client, &["tcp", &lan_tcp_s]);
-    std::thread::sleep(Duration::from_millis(200));
-    let restored = v["result"] == "connected" && tcp_hits() == h + 1;
     session.core.stop_session();
     session.core.shutdown();
     let _ = server.kill();
     let after_snap = snapshot(elevated);
     let side = diff_snapshots(&before, &after_snap);
-    r.add("T18", "after normal shutdown: selected app direct again, no WFP objects left", "restored", json!({"client": v, "wfpAfter": after_snap.get("wfpPocObjects")}), "runtime",
-        if !enforced { "NOT TESTED: WFP NOT ACTIVE" } else if restored && after_snap.get("wfpPocObjects").is_some_and(|s| s.ends_with(": 0")) { "PASS: RUNTIME VERIFIED" } else { "FAIL" });
 
     let report = json!({ "complete": true, "elevated": elevated, "wfpActive": enforced, "lan": lan.to_string(), "systemSideEffects": side, "scenarios": r.rows });
     println!("{}", serde_json::to_string_pretty(&report["systemSideEffects"]).unwrap());
