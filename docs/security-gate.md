@@ -98,6 +98,33 @@ integration 20/20, extension 56/56 + typecheck, real-browser E2E 82/82, packaged
 11/11, clippy clean (product, Phase 7.5 PoC, Phase 8 redirector), `cargo audit` and `npm audit`
 0 findings.
 
+## Phase 8.5 driver runtime validation (branch `phase-8.5-driver-runtime-validation`)
+
+Evidence: [phase8.5-driver-runtime-validation.md](phase8.5-driver-runtime-validation.md).
+
+| Property | Status |
+|---|---|
+| Callout driver compiled | NOT TESTED: ENVIRONMENT UNAVAILABLE (no WDK; no hypervisor; CPU virtualization disabled in firmware; 4 GB free on C:) |
+| Callout driver loaded / runtime tested | BLOCKED (no safe VM; workstation security unchanged) |
+| Ownership of the WFP local redirect context | PASS - CODE REVIEW ONLY (settled against Microsoft docs: WFP takes ownership at hand-over) |
+| Driver unload leaves no WFP objects | PASS - CODE REVIEW ONLY (**defect fixed**: callout objects were never deleted) |
+| Routing service never reports Protected without a driver | PASS - RUNTIME VERIFIED (service self-test S3) |
+| Routing service fails closed when BLOCK filters cannot be installed | PASS - RUNTIME VERIFIED (S4) |
+| Policy validation rejects malformed and self-referential policies | PASS - AUTOMATED TEST (S5; **defect fixed**: the guard silently never matched) |
+| Driver IOCTL ABI matches the header | PASS - AUTOMATED TEST (S1) |
+| Phase 8 user-mode routing path | PASS - RUNTIME VERIFIED (re-run unchanged: R1-R9, R14, R15) |
+
+Regression re-run (2026-09-23): native unit 84/84, architecture 4/4, Core API 8/8, integration
+**20/20 when run serially**, extension 56/56 + typecheck, real-browser E2E 82/82, packaged runtime
+adversarial 11/11, clippy clean (product, Phase 7.5 PoC, Phase 8 crate), `cargo audit` and
+`npm audit` 0 findings.
+
+Two environmental incidents during this run, recorded because they explain non-reproducible output:
+the system drive filled to **0 bytes free** mid-suite (the shared cargo target directory had grown
+to 3.3 GB), and orphaned test processes from earlier harness runs were still holding resources.
+Both produced integration failures that disappeared once the disk was freed, the orphans were
+stopped and the suite was run serially. Neither was a product defect.
+
 ## Phase 6 re-verification (2026-09-22, branch `phase-6-core-modularization`)
 
 The code was restructured into a Shared Core with the browser as a thin client
