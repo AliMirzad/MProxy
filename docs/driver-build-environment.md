@@ -71,3 +71,29 @@ run would trade a real security property for a demo. The honest result is
 | IT approval of a kernel driver | no | no | **yes** |
 
 Signing details: [driver-signing-and-release.md](driver-signing-and-release.md).
+
+## Phase 8.5 re-probe (2026-09-23): two hard blockers, not one
+
+The earlier table listed missing software. A second probe found something that software cannot fix:
+
+| Finding | Value | Consequence |
+|---|---|---|
+| `Win32_Processor.VirtualizationFirmwareEnabled` | **False** | VT-x is disabled in UEFI, so **no hypervisor can run at all** — not Hyper-V, not VMware, not VirtualBox. Enabling it is a firmware security setting on a company machine, i.e. an IT decision |
+| `Win32_ComputerSystem.HypervisorPresent` | False | nothing is virtualizing today |
+| `SecondLevelAddressTranslationExtensions` | True | the hardware *is* capable once firmware allows it |
+| Free space on `C:` | **4.1 GB** | VS + SDK + WDK need roughly 15–20 GB; a Windows VM image needs 40 GB+. `F:` has ~114 GB, which could host a VM but not the OS-drive install footprint |
+| Hyper-V, VMware, VirtualBox, QEMU, Windows Sandbox | all absent | nothing to roll back into |
+
+So the driver cannot be built here, cannot be loaded here, and cannot be tested here. The three ways
+forward, in order of preference:
+
+1. **A personal or lab machine** with virtualization enabled and ~60 GB free: install the hypervisor,
+   a disposable Windows 11 VM, and the WDK *inside the VM*. Nothing about the company workstation
+   changes.
+2. **Ask IT** to enable virtualization in firmware and provide disk space, then do the same locally.
+   This is a legitimate request with a documented purpose; it is not something to enable quietly.
+3. **A cloud Windows VM that supports nested virtualization** — the driver only needs to load inside
+   that VM, and no company data ever goes on it.
+
+In all three cases test signing or preproduction provisioning happens **inside the disposable VM
+only**, and Driver Verifier is scoped to `mproxy-wfp.sys`.

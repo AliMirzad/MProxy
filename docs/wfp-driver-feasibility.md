@@ -1,5 +1,10 @@
 # Track B: true per-app routing with a WFP callout driver (feasibility)
 
+**Status after Phase 8.5: SOURCE ONLY, REVIEWED, STILL UNBUILT.** The open correctness question
+(ownership of the local redirect context) is settled from Microsoft documentation and two static-review
+defects are fixed; runtime validation remains blocked for lack of a safe test environment
+([phase8.5-driver-runtime-validation.md](phase8.5-driver-runtime-validation.md)).
+
 **Status: SOURCE ONLY. Phase 8 wrote the driver ([../experimental/windows-wfp-driver/](../experimental/windows-wfp-driver/))
 and the user-mode half around it, and proved everything except the kernel hop
 ([phase8-driver-poc.md](phase8-driver-poc.md)). No driver has been compiled, loaded or signed.**

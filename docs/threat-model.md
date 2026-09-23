@@ -232,3 +232,14 @@ so every mitigation below is **design or code review**, never runtime evidence
 | Application identity replacement | another binary is dropped at a selected path | PoC binds path + user SID only (**insufficient**); production must verify the Authenticode publisher per process start | code review |
 | Driver unload while flows exist | stranded redirects | redirect handle destroyed after callouts are unregistered; dynamic filters are removed with the owning session | code review |
 | Driver bug reaching users | BSOD or escalation on customer machines | HLK certification, Driver Verifier in a VM, minimal kernel surface, no traffic content handling in kernel | design |
+
+### Phase 8.5 updates (static review of the driver, before any load)
+
+| Item | Change |
+|---|---|
+| Redirect-context lifetime | **resolved**: WFP takes ownership at hand-over and frees the context when the proxied flow is removed; the driver frees it only on pre-hand-over failure paths. Previously an open question that could have been a per-connection leak or a double free |
+| Stale WFP objects after unload | **fixed defect**: the FWPM callout objects were never deleted. The engine session is now dynamic and the callouts are deleted explicitly on unload |
+| Callout unregistration while flows exist | **hardened**: `STATUS_DEVICE_BUSY` is no longer ignored; completion tracking via `notifyFn` is a named review item for the first VM run |
+| Another product already redirecting a flow | **hardened**: any redirect state other than `NOT_REDIRECTED` is now hands-off, so two proxies never fight over one connection |
+| Routing service loop-prevention check | **fixed defect**: the guard refusing to route the product own executables compared a verbatim canonical path with a non-verbatim install directory and silently never matched (found by the service self-test) |
+| Service reporting Protected without a driver | **prevented and runtime verified**: `Protected` requires driver, filters and a live redirector; otherwise the state is `Blocking` or `Failed` |

@@ -90,3 +90,11 @@ plainly ([phase8-driver-poc.md](phase8-driver-poc.md), section 40 of the phase b
 Nothing is hidden, nothing is obfuscated, and no evasion technique is used anywhere in this design.
 The Phase 7.5 experience (an unsigned test binary terminated by endpoint security) is the reason
 signing and allowlisting come before any pilot.
+
+## Phase 8.5 note: the test environment IT would have to allow
+
+Validating the driver needs a machine where **CPU virtualization is enabled in firmware** and a
+disposable VM can run. On this workstation `VirtualizationFirmwareEnabled` is `False` and no
+hypervisor is installed, so the work cannot happen here without an IT firmware change - which is a
+security-relevant setting and therefore an IT decision, not something to be worked around locally.
+The alternative is a personal or lab machine that never holds company data.

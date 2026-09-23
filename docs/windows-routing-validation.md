@@ -145,3 +145,11 @@ the filters validated above are installed before Xray starts, and the redirect f
 only once the tunnel and redirector are live. Anything that is not redirected - UDP, IPv6 while it
 is unverified, traffic during startup or after a failure - is therefore blocked by the layer this
 document measured, not left direct.
+
+## Phase 8.5 note
+
+The enforcement measured here is now owned by the minimal routing service rather than a test binary,
+and the service refuses to report "Protected" unless the driver, the filters and the redirector are
+all confirmed - which is the direct answer to the T17 fail-open finding above. The service state
+machine is runtime verified; the driver half is not
+([phase8.5-driver-runtime-validation.md](phase8.5-driver-runtime-validation.md)).

@@ -130,3 +130,12 @@ application that the filters do not already match. Details and the attack surfac
 
 None of this is runtime evidence: the driver has never been compiled or loaded
 ([driver-build-environment.md](driver-build-environment.md)).
+
+### Phase 8.5: who is allowed to say "Protected"
+
+The routing service is the only component that may conclude an application is protected, and it may
+only do so when the callout driver is present, the redirect target is set, the BLOCK filters exist
+and the redirector process is alive. Every other situation is `Blocking` (selected applications
+cannot leak, but they are not routed) or `Failed`. A future UI renders that string; it never derives
+it. Verified at runtime in the service self-test
+([phase8.5-driver-runtime-validation.md](phase8.5-driver-runtime-validation.md)).

@@ -222,3 +222,18 @@ they apply from the first connect of any instance — including instances starte
 Discovering already-running processes and attaching to them is a race by construction; launching
 through MProxy (or requiring a restart of the application) avoids it. For already-running processes
 the honest UI answer is "restart this app to protect it", not a silent partial state.
+
+## Phase 8.5: the contract a future Desktop client may depend on
+
+Only these exist and are stable enough to build on. Anything not listed is not ready.
+
+| Element | State | Notes |
+|---|---|---|
+| `ApplicationRoutingProvider` (capabilities / prepare / activate / state / deactivate) | EXPERIMENTAL, exercised | unchanged since Phase 7; survived two PoCs |
+| `RoutingService` (set_app_policy / clear_app_policy / query_state / query_driver_state) | EXPERIMENTAL, runtime verified state machine | the only authority on protection status |
+| `RoutingState` = Inactive / Blocking / Protected / Failed | EXPERIMENTAL, runtime verified | `Protected` requires driver + filters + live redirector |
+| Redirector (loopback, authenticated upstream, destination from kernel context only) | RUNTIME TESTED | Phase 8 |
+| Driver device ABI (`RedirectTarget`, `DriverState`, three IOCTLs) | SOURCE ONLY, ABI checked in a test | never executed |
+| Session lifecycle Disconnected -> PreparingRouting -> StartingXray -> ActivatingRouting -> Protected | DESIGN | `Protected` only when all four conditions hold |
+| Failure states (Xray / redirector / service / driver / UI) | Phase 8 runtime for the first two, design for the rest | unexpected DIRECT is a failure in every one |
+| `RuntimeCapabilities.application_routing` | **false** | stays false until the driver is runtime verified |
