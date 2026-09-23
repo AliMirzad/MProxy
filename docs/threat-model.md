@@ -210,3 +210,25 @@ Nothing below ships. It frames the design of a future desktop client; evidence i
 | Enforcer crash with dynamic WFP session (Track A) | filters vanish, selected app **fails open** | production: a service that owns the filters and restarts; or persistent filters with explicit cleanup | see windows-routing-validation.md T17 |
 | Endpoint security terminates the enforcer | an unsigned or unknown binary that opens WFP sessions is killed by EDR; protection disappears while the UI may still claim it | signed service + helper, vendor reputation, IT allowlisting (F12); the UI derives "Protected" from a live service confirmation, never from its own assumption | runtime: observed twice during elevated validation (exit 0x40000015, correlated EDR event; not proven) |
 | UI overstating protection | a user trusts "Protected" for an app that is in fact bypassing (proxy-unaware, DNS, IPv6 untested, filters gone) | the state model in future-desktop-architecture.md: Protected only for a proxy-aware app with confirmed live filters; otherwise Blocked or Not protected | design, from runtime T1/T8/T17 |
+
+### Phase 8 additions: kernel driver and redirector attack surface (SOURCE ONLY / EXPERIMENTAL)
+
+Kernel code is the highest-risk component in this product. None of it has been compiled or loaded,
+so every mitigation below is **design or code review**, never runtime evidence
+([phase8-driver-poc.md](phase8-driver-poc.md)).
+
+| Actor / event | Risk | Mitigation (design) | Evidence |
+|---|---|---|---|
+| Malformed IOCTL | kernel memory corruption from length or type confusion | three fixed-size `METHOD_BUFFERED` structures; input length must equal `sizeof` exactly; version and reserved fields checked; no variable-length data, no embedded pointers, no user-mode pointer ever dereferenced | code review |
+| Unprivileged device access | any local process reprograms the redirect target and captures other applications' traffic | device ACL `D:P(A;;GA;;;SY)(A;;GA;;;BA)` (SYSTEM + Administrators, protected), `FILE_DEVICE_SECURE_OPEN` so relative opens are covered too | code review |
+| Policy spoofing through the driver | a caller makes the driver route an application of its choosing | **the driver cannot express that**: application matching lives in user-mode WFP filter conditions; the IOCTL carries only a port and a PID | code review (design property) |
+| Integer overflow / buffer lifetime | classic kernel bugs | no arithmetic on user input; the only allocation is one fixed-size redirect context per connection | code review; **open item**: ownership of `localRedirectContext` must be confirmed against the WFP sample before the first VM run |
+| Race conditions | target read while being updated | target snapshot under `EX_SPIN_LOCK`; classify never touches the live structure | code review |
+| Use-after-free on unload | classify running against freed state | unload clears the target first, then unregisters callouts, then destroys the redirect handle, then closes the engine | code review |
+| Redirect loop | the redirector's or Xray's own traffic redirected back into the redirector | three layers: `FwpsQueryConnectionRedirectState0`, the redirector's PID excluded, and redirect records set on the proxied socket; the service also refuses targets inside the product directory | kernel part: code review; user-mode half: **runtime (R7)** |
+| Service impersonation | a process pretends to be the routing service | device ACL plus the service's own IPC ACL; the driver accepts commands only from handles that passed the device ACL | code review |
+| Malicious **selected** application | tries to reach the network outside the redirect | Track A BLOCK filters remain the fail-closed layer: anything not redirected is blocked (**runtime verified in Phase 7.5**) | runtime + design |
+| Malicious **unselected** application | connects to the redirector to get free tunnelling | the redirector never takes a destination from the stream (**runtime R6**), and production restricts the redirect inbound to redirected flows | runtime (R6) |
+| Application identity replacement | another binary is dropped at a selected path | PoC binds path + user SID only (**insufficient**); production must verify the Authenticode publisher per process start | code review |
+| Driver unload while flows exist | stranded redirects | redirect handle destroyed after callouts are unregistered; dynamic filters are removed with the owning session | code review |
+| Driver bug reaching users | BSOD or escalation on customer machines | HLK certification, Driver Verifier in a VM, minimal kernel surface, no traffic content handling in kernel | design |

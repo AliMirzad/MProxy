@@ -85,7 +85,8 @@ The wire protocol (v3) did not change. The extension is untouched by Phase 6.
 |---|---|
 | Browser client, Shared Core, runtime, platform (above) | **PRODUCTION** |
 | `experimental/per-app-routing-poc/` (app-configured launcher, user-mode WFP enforcement, harness) | **EXPERIMENTAL**: a separate crate, never built by packaging (`package.mjs` refuses it) |
-| WFP connect-redirect callout driver (true per-process routing on Windows) | **RESEARCH ONLY / NOT IMPLEMENTED** |
+| `experimental/windows-redirector/` (local redirector + Phase 8 harness) | **EXPERIMENTAL**: compiled and runtime tested, never packaged |
+| WFP connect-redirect callout driver (true per-process routing on Windows) | **SOURCE ONLY** (`experimental/windows-wfp-driver/`): never compiled, loaded or signed |
 | macOS `NETransparentProxyProvider` system extension | **RESEARCH ONLY / NOT IMPLEMENTED** |
 
 The product Core does not call any routing provider, and `RuntimeCapabilities.application_routing`

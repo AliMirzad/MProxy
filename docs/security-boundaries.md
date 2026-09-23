@@ -112,3 +112,21 @@ IPv6 enforcement is implemented and unverified: the validation machine has no IP
 The boundary between a future privileged routing service and the user session is a fixed command
 set over an ACL'd IPC channel ([per-app-routing-corporate-impact.md](per-app-routing-corporate-impact.md)).
 It does not exist in code yet.
+
+## Kernel boundary (Phase 8: SOURCE ONLY, not in the product)
+
+```text
+routing service (LocalSystem) ──IOCTL: {redirector port, redirector PID}──► mproxy-wfp.sys
+        device ACL: SYSTEM + Administrators only, FILE_DEVICE_SECURE_OPEN
+        the driver holds NO application list, NO paths, NO SIDs, NO secrets
+selected app ──connect──► callout rewrites destination ──► redirector ──authenticated──► Xray
+```
+
+The boundary that matters here is what the kernel is *able* to be told. Application selection stays
+in user-mode WFP filter conditions, so the widest thing a compromised service can do through the
+driver is point redirection at a different local port - it cannot make the kernel route an
+application that the filters do not already match. Details and the attack surface table:
+[phase8-driver-poc.md](phase8-driver-poc.md), [threat-model.md](threat-model.md).
+
+None of this is runtime evidence: the driver has never been compiled or loaded
+([driver-build-environment.md](driver-build-environment.md)).

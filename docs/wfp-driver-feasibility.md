@@ -1,6 +1,8 @@
 # Track B: true per-app routing with a WFP callout driver (feasibility)
 
-**Status: RESEARCH ONLY, DEFERRED. No driver was built or run. Phase 7.5 outcome below.**
+**Status: SOURCE ONLY. Phase 8 wrote the driver ([../experimental/windows-wfp-driver/](../experimental/windows-wfp-driver/))
+and the user-mode half around it, and proved everything except the kernel hop
+([phase8-driver-poc.md](phase8-driver-poc.md)). No driver has been compiled, loaded or signed.**
 
 This workstation:
 * has no Windows Driver Kit or Visual Studio;

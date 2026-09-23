@@ -350,3 +350,57 @@ Until 1–7 exist, `RuntimeCapabilities.application_routing` stays **false** and
 here. It needs the WFP callout driver, and even then UDP would be blocked rather than routed, and DNS
 metadata would still need separate handling. Track B stays a costed, deferred option — see the
 [feasibility record](wfp-driver-feasibility.md) and its VM test plan.
+
+## 15. Phase 8: true per-app routing, and what it changes
+
+Evidence: [phase8-driver-poc.md](phase8-driver-poc.md); build and signing constraints in
+[driver-build-environment.md](driver-build-environment.md) and
+[driver-signing-and-release.md](driver-signing-and-release.md).
+
+### 15.1 Result
+
+**RESULT B: the architecture is validated, the kernel hop is not.**
+
+Phase 8 built the whole user-mode half of W1 and proved it at runtime: a genuinely proxy-unaware
+client's connection was carried through the redirector, the authenticated inbound, Xray and the
+tunnel to a destination that is unreachable by any other path, while a control client's identical
+connection to that destination timed out. It fails closed when Xray or the redirector dies, it is not
+an open proxy, and it makes no global system change.
+
+The kernel callout that would intercept a real application's connection is **written but never
+compiled, loaded or signed**: this machine has no WDK, no Visual Studio C++ toolchain and no
+disposable VM, and its Secure Boot, driver-signing enforcement and endpoint protection stay as they
+are.
+
+So the honest statement is: **the product goal is technically real, and it is not yet demonstrated.**
+The only unproven step is the one Microsoft documents most clearly, and it is also the most
+expensive one to ship.
+
+### 15.2 What Phase 8 settles for the design
+
+| Question | Answer | Basis |
+|---|---|---|
+| Does transparent routing require an unauthenticated local proxy? | **No.** The redirector holds the credentials on the application's behalf; Phase 5 F5 stands | runtime (R1, R6) |
+| Which Xray inbound receives redirected traffic? | the **existing authenticated inbound**, via `CONNECT <original destination>`; no new inbound, no dokodemo-door | runtime |
+| Can the kernel component stay small? | **Yes.** Policy lives in user-mode WFP filter conditions; the driver only learns a port and a PID | code review (design property) |
+| Is Track A still needed? | **Yes**, as the fail-closed layer: BLOCK first, redirect second, so anything not redirected cannot leak | Phase 7.5 runtime + Phase 8 design |
+| Does the driver fix DNS? | **No** | runtime (Phase 7.5 T8) + documented resolver architecture |
+| Can UDP be routed? | **No**, block it | Microsoft documentation |
+
+### 15.3 Decision
+
+**DO NOT START THE DESKTOP CLIENT YET**, and do not abandon the goal either. The order is:
+
+1. obtain the EV certificate and Partner Center hardware account (procurement, starts now, gates
+   everything else);
+2. set up a WDK build environment and a disposable VM; compile the driver; settle the review items
+   in its README;
+3. run the Phase 8 matrix in the VM with a real proxy-unaware application and Driver Verifier;
+4. build the routing service (policy owner, fail-closed lifecycle) with the UI state model from
+   [future-desktop-architecture.md](future-desktop-architecture.md);
+5. only then design a Desktop client, and only with the vocabulary Phase 7.5 fixed: **Protected**
+   means confirmed live enforcement, and an application that can still bypass is never shown as
+   protected.
+
+If step 1 or 3 fails, the fallback is the Phase 7.5 decision (OPTION 2, limited protected-app mode),
+which needs no driver and is already runtime-verified.

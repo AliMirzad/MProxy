@@ -136,3 +136,12 @@ identical results in both.
 * [Filtering condition identifiers](https://learn.microsoft.com/en-us/windows/win32/fwp/filtering-condition-identifiers-) (`ALE_APP_ID`, `ALE_USER_ID`; no parent-process condition)
 * [FWPM_SESSION0](https://learn.microsoft.com/en-us/windows/win32/api/fwpmtypes/ns-fwpmtypes-fwpm_session0) (dynamic sessions and automatic object removal)
 * [ALE layers](https://learn.microsoft.com/en-us/windows/win32/fwp/ale-layers)
+
+## Phase 8 update: Track A is still the fail-closed layer
+
+Phase 8 added transparent redirection on top of this enforcement rather than replacing it
+([phase8-driver-poc.md](phase8-driver-poc.md)). The lifecycle is **BLOCK first, redirect second**:
+the filters validated above are installed before Xray starts, and the redirect filters are added
+only once the tunnel and redirector are live. Anything that is not redirected - UDP, IPv6 while it
+is unverified, traffic during startup or after a failure - is therefore blocked by the layer this
+document measured, not left direct.

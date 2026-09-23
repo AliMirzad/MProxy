@@ -64,6 +64,40 @@ integration 20/20, extension 56/56 + typecheck, real-browser E2E 82/82, packaged
 11/11, clippy clean (product and PoC), `cargo audit` and `npm audit` 0 findings. In this run the
 release helper was **not** removed by the endpoint product, unlike the Phase 6 run.
 
+## Phase 8 true per-app routing PoC (branch `phase-8-true-per-app-driver-poc`)
+
+Evidence: [phase8-driver-poc.md](phase8-driver-poc.md). The product is unchanged: no routing code
+ships, `RuntimeCapabilities.application_routing` is still `false`, and the packaging guard rejects
+both experimental trees.
+
+| Property | Status |
+|---|---|
+| Proxy-unaware application's connection carried to a destination reachable only through the tunnel | PASS: RUNTIME VERIFIED (R1; destination-side attribution shows `xray.exe`) — **user-mode path only, kernel interception simulated** |
+| That destination unreachable without the tunnel (control) | PASS: RUNTIME VERIFIED (R2) |
+| Unselected application stays direct | PASS: RUNTIME VERIFIED (R3) |
+| Routed client uses no proxy configuration of its own | PASS: RUNTIME VERIFIED (R4) |
+| Redirector is loopback-only | PASS: RUNTIME VERIFIED (R5) |
+| Redirector is not an open proxy (destination never comes from the stream) | PASS: RUNTIME VERIFIED (R6) |
+| Authenticated inbound preserved (F5): no unauthenticated endpoint created | PASS: CODE REVIEW ONLY + runtime (the redirector authenticates per connection) |
+| Loop prevention, user-mode half | PASS: RUNTIME VERIFIED (R7) |
+| Loop prevention, kernel half | PASS: CODE REVIEW ONLY |
+| Fail closed when Xray dies | PASS: RUNTIME VERIFIED (R8) |
+| Fail closed when the redirector dies | PASS: RUNTIME VERIFIED (R9) |
+| Several instances / restart of the routed application | PASS: RUNTIME VERIFIED (R14) |
+| No global system change from the user-mode path | PASS: RUNTIME VERIFIED (R15) |
+| Selected TCP IPv6 | NOT TESTED: ENVIRONMENT LIMITATION |
+| Selected UDP transparently routed | RESEARCH ONLY — not viable; blocking stays the answer (Phase 7.5 T4 runtime) |
+| DNS metadata of a routed application | FAIL: still leaks through the DNS Client service |
+| Kernel callout driver compiled | NOT TESTED: ENVIRONMENT UNAVAILABLE (no WDK/Visual Studio) |
+| Kernel callout driver loaded / runtime tested | NOT TESTED: BLOCKED BY TEST ENVIRONMENT (no disposable VM; workstation security unchanged) |
+| Production driver signing | BLOCKED BY SIGNING REQUIREMENT (EV certificate + Partner Center + HLK) |
+| Real application (ChatGPT/Claude/Cursor) routed transparently | NOT TESTED (impossible without the driver; configuring the app instead would not be routing) |
+
+Regression re-run on this branch (2026-09-23): native unit 84/84, architecture 4/4, Core API 8/8,
+integration 20/20, extension 56/56 + typecheck, real-browser E2E 82/82, packaged runtime adversarial
+11/11, clippy clean (product, Phase 7.5 PoC, Phase 8 redirector), `cargo audit` and `npm audit`
+0 findings.
+
 ## Phase 6 re-verification (2026-09-22, branch `phase-6-core-modularization`)
 
 The code was restructured into a Shared Core with the browser as a thin client

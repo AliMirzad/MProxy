@@ -20,7 +20,7 @@ use per_app_routing_poc::testkit::{diff_snapshots, free_port, is_elevated, plain
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream, UdpSocket};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -122,7 +122,7 @@ fn start_test_server(redirect_to: &str) -> (Child, u16) {
     (child, port)
 }
 
-fn start_redirector(exe: &PathBuf, upstream: &per_app_routing_poc::LocalEndpoint, state: &PathBuf) -> (Child, u16, u32) {
+fn start_redirector(exe: &Path, upstream: &per_app_routing_poc::LocalEndpoint, state: &Path) -> (Child, u16, u32) {
     let mut child = Command::new(exe)
         .args([
             "--upstream",

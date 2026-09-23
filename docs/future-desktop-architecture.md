@@ -162,3 +162,63 @@ bypass MProxy.
 
 `RuntimeCapabilities.application_routing` stays **false** until the service, the signature binding
 and the UI state model above exist and are verified on a machine.
+
+## Phase 8: components for transparent routing (design + what exists)
+
+Runtime evidence and labels: [phase8-driver-poc.md](phase8-driver-poc.md).
+
+```text
+Desktop UI (user, display only)            ── not built, not started ──
+        │ query state, never assume
+        ▼
+Shared Core (existing)
+        │
+        ▼
+routing service (LocalSystem)              DESIGN ONLY
+        │ set_app_policy / clear_app_policy / query_policy_state / query_driver_state
+        ├───► WFP filters: BLOCK selected app, PERMIT loopback, CALLOUT for redirect
+        └───► driver IOCTL: redirector port + PID only
+                    │
+                    ▼
+          mproxy-wfp.sys (kernel)          SOURCE ONLY
+                    │ rewrites destination, passes the original along
+                    ▼
+            redirector (user)              RUNTIME TESTED
+                    │ CONNECT + credentials
+                    ▼
+        authenticated inbound → Xray       PRODUCTION
+```
+
+### Service API, and what it must never become
+
+Allowed: `set_app_policy(targets)`, `clear_app_policy()`, `query_policy_state()`,
+`query_driver_state()`. Targets are validated by the service: canonical path, Authenticode publisher,
+and the SID of the caller's own session.
+
+Forbidden, and absent by construction: executing processes or shell commands, loading arbitrary
+drivers, writing arbitrary files or registry keys, adding arbitrary firewall rules, injecting into
+processes, reading user files. The service is not a SYSTEM-level control plane with a routing
+feature; it is a routing component that happens to need SYSTEM.
+
+### Lifecycle (fail-closed first, §37)
+
+```text
+Disconnected
+  → PreparingRouting   install BLOCK filters for the selected apps      (they now have loopback only)
+  → StartingXray       start and verify the tunnel
+  → ActivatingRouting  start the redirector, set the driver target, add the redirect filters
+  → Protected          only when Xray, redirector, driver and filters are all confirmed live
+  → Stopping / Failed  remove redirect filters first, BLOCK filters last
+```
+
+`Protected` is never derived from the UI's own belief. If the service cannot confirm all four
+conditions, the state is `Failed` and the UI says **Not protected** — the rule carried over from
+Phase 7.5, where killing the filter owner silently returned an application to direct.
+
+### Process start race (§16)
+
+Policy is installed **before** the application is launched, and the BLOCK filters are path-based, so
+they apply from the first connect of any instance — including instances started later by the user.
+Discovering already-running processes and attaching to them is a race by construction; launching
+through MProxy (or requiring a restart of the application) avoids it. For already-running processes
+the honest UI answer is "restart this app to protect it", not a silent partial state.

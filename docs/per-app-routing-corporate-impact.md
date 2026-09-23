@@ -71,3 +71,22 @@ Evidence: [windows-routing-validation.md](windows-routing-validation.md) (Track 
 | Managed browser extension | still required if browser mode is also used (F7) | same |
 
 None of this is approved by IT. Both modes are designs with evidence levels given in the documents above.
+
+## Phase 8 update: what IT would see with the driver
+
+Once the driver exists, "no system changes" stops being true, and the documentation must say so
+plainly ([phase8-driver-poc.md](phase8-driver-poc.md), section 40 of the phase brief):
+
+> No global route, proxy or DNS changes; **one Microsoft-signed kernel driver and one Windows service installed**.
+
+| What is installed | Visible to IT/EDR as | Approval needed |
+|---|---|---|
+| `mproxy-wfp.sys` | a new kernel driver that redirects network connections; device restricted to SYSTEM/Administrators | Microsoft (HLK) signature + IT driver approval |
+| routing service | a Windows service holding WFP filters and callout filters | Authenticode signature + allowlisting |
+| redirector | a user-mode process listening on loopback | Authenticode signature |
+| WFP objects | our sublayer with BLOCK/PERMIT filters plus callout filters | visible in `netsh wfp show filters` |
+| helper + Xray | unchanged from today | unchanged |
+
+Nothing is hidden, nothing is obfuscated, and no evasion technique is used anywhere in this design.
+The Phase 7.5 experience (an unsigned test binary terminated by endpoint security) is the reason
+signing and allowlisting come before any pilot.
