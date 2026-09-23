@@ -26,8 +26,10 @@ safe to load it.
 
 1. Visual Studio 2022 with the **Desktop development with C++** workload.
 2. The matching **Windows SDK**, then the **WDK** (installs the VS driver templates and `fwpsk.h`/`fwpmk.h`).
-3. Open `experimental/windows-wfp-driver/` as a KMDF driver project, or build with
-   `msbuild mproxy-wfp.vcxproj /p:Configuration=Debug /p:Platform=x64`.
+3. Create a **Kernel Mode Driver, Empty (KMDF)** project from the WDK template and add
+   `experimental/windows-wfp-driver/mproxy-wfp.c` and `.h` to it. No `.vcxproj` or `.inf` is
+   committed: a project file written without the WDK installed would be guesswork, while the
+   template produces the correct toolset, signing and deployment properties.
 4. Expect first-compile work: the placeholder callout GUIDs must be regenerated, and the review
    points listed in the component README (redirect-context ownership, field byte order, callout
    registration version) must be settled against `fwpsk.h` and the WFP driver sample.
