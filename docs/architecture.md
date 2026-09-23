@@ -89,7 +89,12 @@ The wire protocol (v3) did not change. The extension is untouched by Phase 6.
 | macOS `NETransparentProxyProvider` system extension | **RESEARCH ONLY / NOT IMPLEMENTED** |
 
 The product Core does not call any routing provider, and `RuntimeCapabilities.application_routing`
-is `false`. Findings and the recommendation are in [per-app-routing-decision.md](per-app-routing-decision.md).
+is `false`. Findings and the decision are in [per-app-routing-decision.md](per-app-routing-decision.md);
+Phase 7.5 added elevated runtime evidence for the enforcement layer in
+[windows-routing-validation.md](windows-routing-validation.md). In short: a selected application can
+be **prevented from bypassing** the proxy, but an application without proxy support is **blocked, not
+routed** — transparent routing still needs the unbuilt callout driver
+([wfp-driver-feasibility.md](wfp-driver-feasibility.md)).
 
 ## Process lifetime
 

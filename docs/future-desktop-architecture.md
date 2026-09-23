@@ -114,3 +114,51 @@ Phase 7 researched and prototyped the routing seam; see
 | macOS mechanism "Network Extension" | `NETransparentProxyProvider` system extension (entitlement, Developer ID); per-app VPN needs MDM | RESEARCH ONLY |
 
 `RuntimeCapabilities.application_routing` remains **false** in the product. Nothing of Phase 7 is PRODUCTION.
+
+## Phase 7.5: what a limited Desktop V1 would look like (still not built)
+
+Track A is now runtime-verified with administrator rights
+([windows-routing-validation.md](windows-routing-validation.md)), and the decision is **OPTION 2: a
+limited "protected applications" Desktop**, conditional on the list in
+[per-app-routing-decision.md](per-app-routing-decision.md) section 14.3. No Desktop UI is built in
+this phase.
+
+### Component shape (Windows)
+
+```text
+Desktop UI (user)  ──IPC──►  MProxy helper (user, Shared Core + Xray)
+        │                             ▲
+        │ fixed command set           │ endpoint + session state
+        ▼                             │
+   routing service (LocalSystem)  ────┘
+        │  owns the WFP dynamic session for the interactive user's SID
+        ▼
+   WFP filters: BLOCK selected app ≠ loopback │ PERMIT selected app → loopback inbound
+```
+
+Why the service exists at all: T17 showed that when the process holding the filters is killed, the
+filters disappear within about a second and the selected application is direct again. Protection
+whose lifetime equals a user-killable process is not protection.
+
+### State model the UI must obey
+
+| Service reports | Application is proxy-aware | UI shows |
+|---|---|---|
+| filters present, session Connected | yes | **Protected** |
+| filters present, session Connected | no | **Blocked (this app cannot use a proxy)** |
+| filters present, session down | either | **Blocked** |
+| filters absent / service unreachable | either | **Not protected** |
+
+There is no state in which the UI shows Protected without a live confirmation from the service. This
+is the rule the phase exists to enforce: never display Protected for an application that can still
+bypass MProxy.
+
+### What such a V1 would *not* do
+
+* route applications that have no proxy support (they are blocked; Track B is required for routing);
+* protect DNS metadata (T8);
+* inherit to child processes automatically (T13/T15; explicit executables only, T14);
+* claim IPv6 coverage until it is re-validated on a v6-capable network (T6/T7).
+
+`RuntimeCapabilities.application_routing` stays **false** until the service, the signature binding
+and the UI state model above exist and are verified on a machine.

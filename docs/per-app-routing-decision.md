@@ -3,6 +3,9 @@
 **Question:** Can Private Proxy safely and maintainably proxy arbitrary selected desktop applications
 while leaving the rest of the system direct?
 
+**Phase 7.5 (2026-09-23) validated Track A at runtime with administrator rights and settled this
+decision. Read section 14 first; sections 1-13 are the Phase 7 record that led to it.**
+
 **Short answer:**
 * On Windows, **true per-process routing needs a WFP connect-redirect kernel callout driver**
   (Microsoft-signed, EV certificate, admin install). That could not be built or validated on this
@@ -64,7 +67,7 @@ shipped): `experimental/per-app-routing-poc/`.
 |---|---|---|---|---|
 | Admin install | yes | yes | yes (service) | no |
 | Admin runtime | no (service) | no (service) | no (service) | no |
-| Signing beyond the helper | **EV cert + Microsoft attestation/WHQL** | none | none | none |
+| Signing beyond the helper | **EV cert + a Microsoft-signed driver: HLK-tested submission for production** (attestation signing is documented as testing-only) | none | none | none |
 | What IT sees | new kernel driver + service + WFP objects | TUN adapter, route/DNS changes | WFP filters from a service | nothing |
 
 ## 6. Chosen Windows PoC mechanism and why
@@ -259,7 +262,7 @@ CONDITIONAL for a restricted design:**
   6. DNS leak for apps that resolve locally is documented;
   7. signed helper + service and IT allowlisting (F12).
 * **CONDITIONAL: true per-app routing (W1 WFP callout driver).** Prerequisites before Phase 8:
-  1. EV certificate + Hardware Dev Center attestation signing;
+  1. EV certificate + a Partner Center hardware account, and HLK testing for a production-signed driver (attestation signing is testing-only per the current Microsoft docs);
   2. driver design and security review (redirect loop handling, UDP/DNS policy, crash behaviour);
   3. a signed test environment (VM);
   4. IT acceptance of a kernel driver on company machines.
@@ -289,3 +292,61 @@ pub trait ApplicationRoutingProvider {
 ```
 
 The experimental implementation of this seam is in `experimental/per-app-routing-poc/src/lib.rs`.
+
+## 14. Phase 7.5 decision (final)
+
+Evidence: [windows-routing-validation.md](windows-routing-validation.md) (Track A, complete elevated
+run 2026-09-23) and [wfp-driver-feasibility.md](wfp-driver-feasibility.md) (Track B, research only).
+
+### 14.1 What the elevated run changed
+
+Phase 7 left W5 enforcement unverified ("admin needed, NOT TESTED"). It is now measured:
+
+| Phase 7 open question | Phase 7.5 answer |
+|---|---|
+| Does W5 actually block a selected app's direct traffic? | **Yes.** Direct IPv4 TCP and UDP blocked (T2, T4), including LAN and private ranges (T10), across restarts (T11) and for every instance (T12) |
+| Does it leave unselected apps alone? | **Yes.** A byte-identical copy at another path stays direct (T3, T5) |
+| Does it fail closed when Xray dies? | **Yes.** No direct fallback during the crash; recovery after restart (T16) |
+| Does it clean up? | **Yes.** No filters, no WFP objects, no system change (T18 and the before/after snapshot) |
+| Does it route proxy-unaware apps? | **No.** They are blocked, not routed. Only proxy-aware apps reach the Internet (T1) |
+| DNS? | **Leaks (T8).** Resolution happens in the DNS Client service, outside any app-path filter |
+| IPv6? | **Unverified (T6/T7):** no IPv6 route on the test machine |
+| Children? | **No inheritance (T13/T15).** Only explicit executable listing works (T14) |
+| Enforcer crash? | **Fails open (T17).** A dynamic session dies with its owner |
+
+### 14.2 The decision
+
+**OPTION 2: a limited "protected applications" Desktop, and only when the conditions below are met.
+Not OPTION 1, not OPTION 3.**
+
+* **Not OPTION 1** (true per-app Desktop): transparent routing of proxy-unaware applications needs the
+  Track B callout driver. It is technically feasible on documented APIs, but it is unbuilt, unvalidated,
+  and gated behind an EV certificate, a Partner Center hardware account and an HLK-tested submission.
+  Nothing in Phase 7.5 moved it closer to existing.
+* **Not OPTION 3** (build nothing): Track A is now a measured, meaningful guarantee — a selected
+  application cannot silently bypass the proxy — with clean teardown and no system-wide changes. That
+  is worth shipping, provided it is named honestly.
+* **OPTION 2**, with the vocabulary fixed: the feature is **"protect this app"**, never "route this app".
+
+### 14.3 Conditions for OPTION 2 (all mandatory)
+
+1. **A service owns the filters.** T17 showed that a user-killable owner fails open. The service must be
+   SYSTEM-owned with a fixed command set (apply/remove policy for validated targets, report state).
+2. **The UI never claims more than it can verify.** "Protected" is displayed only while the service
+   confirms that live filters exist, and only for applications that are actually proxy-aware. A
+   proxy-unaware selected app is shown as **Blocked**, never as Protected.
+3. **Target binding by path *and* Authenticode publisher**, re-verified for each new process of that path.
+4. **The DNS leak is stated in the UI**, not only in documentation.
+5. **IPv6 re-validated on a v6-capable network** before any release claim.
+6. **Children require explicit selection**; no unbounded process-tree inheritance.
+7. **Signed helper and service, plus IT allowlisting** (F12). Unsigned builds are terminated by
+   endpoint security, as observed during this validation.
+
+Until 1–7 exist, `RuntimeCapabilities.application_routing` stays **false** and no Desktop UI is built.
+
+### 14.4 Track B: still required for the full product
+
+"Select any application and have it transparently proxied" is not achievable with anything validated
+here. It needs the WFP callout driver, and even then UDP would be blocked rather than routed, and DNS
+metadata would still need separate handling. Track B stays a costed, deferred option — see the
+[feasibility record](wfp-driver-feasibility.md) and its VM test plan.

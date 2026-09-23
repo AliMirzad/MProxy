@@ -12,7 +12,10 @@ use std::io::{BufRead, BufReader, Write};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs, UdpSocket};
 use std::time::{Duration, Instant};
 
-fn proxy_for(host: &str) -> Option<(String, u16, Option<(String, String)>)> {
+/// Proxy host, port and optional (user, password), as read from the environment.
+type ProxyFromEnv = (String, u16, Option<(String, String)>);
+
+fn proxy_for(host: &str) -> Option<ProxyFromEnv> {
     let raw = ["HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy"].iter().find_map(|k| std::env::var(k).ok())?;
     let no = std::env::var("NO_PROXY").or_else(|_| std::env::var("no_proxy")).unwrap_or_default();
     if no.split(',').any(|n| !n.trim().is_empty() && host.eq_ignore_ascii_case(n.trim())) {

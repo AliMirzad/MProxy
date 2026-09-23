@@ -1,6 +1,6 @@
 # Track B: true per-app routing with a WFP callout driver (feasibility)
 
-**Status: RESEARCH ONLY. No driver was built or run.**
+**Status: RESEARCH ONLY, DEFERRED. No driver was built or run. Phase 7.5 outcome below.**
 
 This workstation:
 * has no Windows Driver Kit or Visual Studio;
@@ -107,6 +107,25 @@ Track A measured the loopback proxy hop at about +1 ms per request against a loc
   * IT approval of a new kernel driver (EDR scrutiny);
   * ongoing maintenance per Windows release.
 * **Not validated at runtime** anywhere in this project (ENVIRONMENT UNAVAILABLE).
+
+## Phase 7.5 outcome: deferred, not rejected
+
+Track A's elevated validation ([windows-routing-validation.md](windows-routing-validation.md)) settled
+what user-mode WFP can and cannot do, and that fixes this document's role: **Track B is the only way
+to reach "select any application and have it transparently proxied".** It remains unbuilt.
+
+| Question | Answer after Phase 7.5 |
+|---|---|
+| Is the driver required for the full product? | **Yes.** Track A blocks proxy-unaware applications; it never routes them |
+| Is the driver required for a limited V1? | **No.** The chosen OPTION 2 ships protection without any driver |
+| Was any driver built or loaded? | **No.** No WDK, no test machine; the workstation's Secure Boot, signing policy and EDR stay untouched |
+| Would it solve DNS? | **No.** Name resolution happens in the DNS Client service; a connect-redirect callout sees only resolved addresses |
+| Would it solve UDP? | **No.** Connected UDP redirected to a local proxy is dropped by Windows (documented); the plan is to block UDP for selected apps |
+| What does it cost to even try? | EV certificate, Partner Center hardware account, HLK-tested submission, a VM lab, kernel development and review, IT driver approval, maintenance per Windows release |
+
+Before any Phase 7b spike is funded, the VM test plan below must run to completion in a disposable
+VM, and the driver must be exercised with Driver Verifier. Nothing about that work belongs on a
+company workstation.
 
 ## VM test plan (for a future Phase 7b, not executed)
 

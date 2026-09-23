@@ -10,6 +10,7 @@
 //!   received nothing;
 //! * "direct"  = the controlled listener received the connection/datagram;
 //! * "proxy"   = reached `probe.test`, a name only the test server's DNS resolves.
+//!
 //! The controlled listeners bind this machine's own LAN address, so WFP classifies the traffic as
 //! non-loopback without anything leaving the machine.
 //!

@@ -85,14 +85,29 @@ The Seatbelt mechanism (`sandbox-exec`) is deprecated. It is isolated in `platfo
 (and its use in `runtime/xray.rs`), so replacing it, e.g. with an App-Sandbox-signed Xray, does not
 touch the Core. The fail-closed rule stays: no sandbox, no connection.
 
-## Per-application routing boundary (Phase 7: EXPERIMENTAL, not in the product)
+## Per-application routing boundary (Phase 7/7.5: EXPERIMENTAL, not in the product)
 
 ```text
 selected app ──(its own proxy setting)──► authenticated loopback inbound ──► Xray   [EXPERIMENTAL: W6]
-selected app ──(anything else)──────────► WFP BLOCK (dynamic session, per user)    [EXPERIMENTAL: W5, needs admin; NOT TESTED]
-unselected apps ────────────────────────► unchanged system path                    [runtime: system snapshot unchanged]
-arbitrary app without proxy support ────► needs a WFP redirect callout driver      [RESEARCH ONLY]
+selected app ──(anything else)──────────► WFP BLOCK (dynamic session, per user)    [EXPERIMENTAL: W5, RUNTIME VERIFIED elevated in Phase 7.5]
+selected app ──(hostname lookup)────────► DNS Client service, outside the boundary  [KNOWN LEAK: runtime T8]
+unselected apps ────────────────────────► unchanged system path                     [runtime: system snapshot unchanged]
+arbitrary app without proxy support ────► needs a WFP redirect callout driver       [RESEARCH ONLY]
 ```
+
+Phase 7.5 measured this boundary with administrator rights
+([windows-routing-validation.md](windows-routing-validation.md)). It holds for direct IPv4 TCP and
+UDP, for every instance of a selected executable and across restarts, and it tears down completely.
+Three limits are part of the boundary, not defects to be explained away:
+
+* **it blocks, it does not route.** An application that ignores proxy settings loses network access
+  instead of being tunnelled;
+* **DNS names still leave** through the DNS Client service (T8);
+* **whoever owns the filters owns the boundary.** With a dynamic session the protection dies with its
+  owning process (T17), so a production build must move that ownership into a service, and the UI may
+  show "Protected" only while the service confirms the filters exist.
+
+IPv6 enforcement is implemented and unverified: the validation machine has no IPv6 route.
 
 The boundary between a future privileged routing service and the user session is a fixed command
 set over an ACL'd IPC channel ([per-app-routing-corporate-impact.md](per-app-routing-corporate-impact.md)).

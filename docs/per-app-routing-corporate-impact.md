@@ -10,7 +10,7 @@ approve. Nothing in Phase 7 evades or modifies endpoint security. The status of 
 |---|---|---|---|
 | **W6 app-configured** (PoC, EXPERIMENTAL) | nothing: selected apps are started with proxy flags/environment | child processes with proxy environment variables; loopback connections | helper signing as today (F12) |
 | **W5 WFP fail-closed filters** (PoC, EXPERIMENTAL) | WFP sublayer + PERMIT/BLOCK filters (dynamic: exist only while the owner runs); in production a **Windows service** running as LocalSystem or with Network Configuration Operators rights | WFP filter changes (visible in `netsh wfp show filters`, Windows event auditing if "Filtering Platform Policy Change" is enabled); a new service | Authenticode-signed service; IT approval of a network-policy service; install requires admin |
-| **W1 WFP callout driver** (RESEARCH ONLY) | kernel-mode driver + service + WFP callouts/filters | **new kernel driver**: highest scrutiny; EDR products inspect drivers that redirect traffic | **EV code-signing certificate** + Microsoft Hardware Dev Center attestation (or WHQL) signing; IT driver approval; WDAC/HVCI compatibility |
+| **W1 WFP callout driver** (RESEARCH ONLY) | kernel-mode driver + service + WFP callouts/filters | **new kernel driver**: highest scrutiny; EDR products inspect drivers that redirect traffic | **EV code-signing certificate** + Microsoft Hardware Dev Center signing: HLK-tested for production (attestation is documented as testing-only since the 2026 docs; see Phase 7.5); IT driver approval; WDAC/HVCI compatibility |
 | W2 WinDivert (rejected) | third-party packet driver | packet-capture driver commonly associated with malware/cheats | vendor-signed; likely blocked by corporate EDR policy |
 | W3 TUN (rejected) | virtual adapter, default route and DNS changes | new network adapter; routing table changes | vendor-signed Wintun; IT approval of a VPN-like client |
 | macOS `NETransparentProxyProvider` (RESEARCH ONLY) | system extension + transparent proxy configuration | System Settings → Network Extensions entry; MDM can pre-approve | Apple Developer Program, NE entitlement, Developer ID signing, notarization |
@@ -52,3 +52,22 @@ Its filters are scoped to that user (`ALE_USER_ID`), so one user cannot route or
   Microsoft-signed build and a driver approval process.
 * In all cases the product binaries must be signed and allowlisted (F12). Extension deployment stays
   managed (F7, [managed-deployment.md](managed-deployment.md)).
+
+## Phase 7.5 update: what IT would need for each Windows mode
+
+Evidence: [windows-routing-validation.md](windows-routing-validation.md) (Track A) and
+[wfp-driver-feasibility.md](wfp-driver-feasibility.md) (Track B).
+
+| Item | Limited protected-app mode (Track A) | True per-app routing (Track B) |
+|---|---|---|
+| Kernel driver | no | **yes**: a WFP callout driver |
+| Driver signing | — | EV certificate + Partner Center hardware account; **HLK-tested submission for production** (Microsoft documents attestation signing as testing-only, not Windows-certified) |
+| Windows service | yes (holds WFP filters; LocalSystem or Network Configuration Operators) | yes (the only driver client) |
+| Admin install | yes | yes |
+| Admin at runtime | no (via service) | no (via service) |
+| Signed binaries | helper, service (Authenticode) | helper, service, redirector, driver (Microsoft-signed) |
+| EDR allowlisting | helper, service, Xray hash | the same, plus **driver approval** |
+| Visible system change | WFP filters of our sublayer | WFP callouts + filters; a kernel driver |
+| Managed browser extension | still required if browser mode is also used (F7) | same |
+
+None of this is approved by IT. Both modes are designs with evidence levels given in the documents above.

@@ -198,3 +198,15 @@ Nothing below ships. It frames the design of a future desktop client; evidence i
 | Xray crash | selected apps fall back to direct | cooperating apps fail closed (connection refused); non-cooperating ones need WFP blocking | runtime F1–F3 |
 | Routing component crash | dynamic filters vanish (fail open) or persistent filters strand (fail closed) | explicit policy choice; corporate mode prefers fail-closed persistent filters owned by a service | design |
 | Other users on the machine | filters apply machine-wide | `ALE_USER_ID` condition per user | code; NOT TESTED (single-user machine) |
+
+### Phase 7.5 additions (Track A validated / Track B RESEARCH ONLY)
+
+| Actor / event | Risk | Mitigation (design) | Evidence |
+|---|---|---|---|
+| WFP callout driver bug (Track B) | kernel crash (BSOD) or privilege escalation from any process that reaches its IOCTL | minimal driver (classify + redirect only), device ACL = routing service only, Driver Verifier + fuzzing in the VM lab, HLK | RESEARCH ONLY |
+| Routing service compromise (A and B) | becomes a SYSTEM-level network control plane | fixed command set (SetPolicy / ClearPolicy / QueryState), validated targets (path + signer + user SID), no command/file/registry/rule primitives | design |
+| Redirect loop (Track B) | Xray's own connection redirected back into itself | redirect state + redirect records + excluding our signed executables | design (documented WFP mechanism) |
+| DNS metadata of a protected app | hostname reaches system/company DNS via the DNS Client service even when the app is blocked or redirected | none in Track A/B; documented as a known leak | runtime (T8: resolver cache) |
+| Enforcer crash with dynamic WFP session (Track A) | filters vanish, selected app **fails open** | production: a service that owns the filters and restarts; or persistent filters with explicit cleanup | see windows-routing-validation.md T17 |
+| Endpoint security terminates the enforcer | an unsigned or unknown binary that opens WFP sessions is killed by EDR; protection disappears while the UI may still claim it | signed service + helper, vendor reputation, IT allowlisting (F12); the UI derives "Protected" from a live service confirmation, never from its own assumption | runtime: observed twice during elevated validation (exit 0x40000015, correlated EDR event; not proven) |
+| UI overstating protection | a user trusts "Protected" for an app that is in fact bypassing (proxy-unaware, DNS, IPv6 untested, filters gone) | the state model in future-desktop-architecture.md: Protected only for a proxy-aware app with confirmed live filters; otherwise Blocked or Not protected | design, from runtime T1/T8/T17 |

@@ -35,6 +35,35 @@ code runs in the browser product. Full results: [per-app-routing-decision.md](pe
 | Normal user cannot add WFP filters | PASS: RUNTIME VERIFIED (`ERROR_ACCESS_DENIED`) |
 | macOS per-app routing | RESEARCH ONLY; ENVIRONMENT UNAVAILABLE |
 
+## Phase 7.5 Windows routing validation (branch `phase-7.5-windows-routing-validation`)
+
+The Phase 7 rows marked "WFP enforcement written, NOT TESTED" were exercised with administrator
+rights on 2026-09-23. Evidence: [windows-routing-validation.md](windows-routing-validation.md).
+The product is still unchanged: `RuntimeCapabilities.application_routing` is `false`, no routing code
+ships, and the PoC is rejected by the packaging guard.
+
+| Property (experimental PoC, elevated) | Status |
+|---|---|
+| Selected app cannot reach the network directly over IPv4 TCP | PASS: RUNTIME VERIFIED (T2, T10–T12) |
+| Selected app cannot leak over UDP | PASS: RUNTIME VERIFIED (T4: datagram dropped, listener received nothing) |
+| Unselected apps unaffected (same bytes, other path) | PASS: RUNTIME VERIFIED (T3, T5) |
+| Loopback stays reachable for selected apps | PASS: RUNTIME VERIFIED (T9) |
+| No direct fallback when Xray dies; recovery afterwards | PASS: RUNTIME VERIFIED (T16) |
+| Complete teardown, no persistent WFP objects, no system change | PASS: RUNTIME VERIFIED (T18 + before/after snapshot) |
+| Selected app without proxy support is routed | **FAIL by design**: it is blocked, not routed (Track B required) |
+| Selected app: no DNS metadata leak | **FAIL**: resolved by the DNS Client service (T8) |
+| IPv6 enforcement | **NOT TESTED: ENVIRONMENT LIMITATION** (no IPv6 route on the machine) |
+| Protection survives the death of the process owning the filters | **FAIL**: dynamic session removed, app fails open (T17) → production requires a service |
+| Child processes covered automatically | **FAIL by design**: no process-tree condition in WFP; explicit executable listing works (T13–T15) |
+| Repeated WFP session open/apply/close in one elevated process | PASS: RUNTIME VERIFIED (`--wfp-cycle 3`: all calls `0x0`, 0 objects left) |
+| Enforcer terminated by endpoint security during validation | **OBSERVED, NOT PROVEN**: two runs ended at `0x40000015` with a correlated EDR event; a later identical run completed. No evasion attempted; remedy is signing + allowlisting (F12) |
+| Track B callout driver | RESEARCH ONLY; ENVIRONMENT UNAVAILABLE (no WDK; machine security settings untouched) |
+
+Regression re-run on this branch (2026-09-23): native unit 84/84, architecture 4/4, Core API 8/8,
+integration 20/20, extension 56/56 + typecheck, real-browser E2E 82/82, packaged runtime adversarial
+11/11, clippy clean (product and PoC), `cargo audit` and `npm audit` 0 findings. In this run the
+release helper was **not** removed by the endpoint product, unlike the Phase 6 run.
+
 ## Phase 6 re-verification (2026-09-22, branch `phase-6-core-modularization`)
 
 The code was restructured into a Shared Core with the browser as a thin client
