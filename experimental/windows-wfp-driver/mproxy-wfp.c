@@ -127,10 +127,16 @@ static void NTAPI MproxyClassify(
 
     /* (1) Loop prevention. A connection we already redirected, or the redirector's own outbound
        connection carrying our redirect records, must be left alone - otherwise the redirector's
-       traffic to Xray, and Xray's traffic to the server, would be redirected back into ourselves. */
+       traffic to Xray, and Xray's traffic to the server, would be redirected back into ourselves.
+
+       Documented handling of each state:
+         NOT_REDIRECTED                  -> we may proxy;
+         REDIRECTED_BY_SELF              -> permit / continue, do not redirect again;
+         PREVIOUSLY_REDIRECTED_BY_SELF   -> "must not perform redirection", permit or block only;
+         REDIRECTED_BY_OTHER             -> may proxy; we deliberately do NOT, so that another
+                                            product's proxy keeps the flow and we never fight it. */
     redirectState = FwpsQueryConnectionRedirectState0(inMetaValues->redirectRecords, g.RedirectHandle, NULL);
-    if (redirectState == FWPS_CONNECTION_REDIRECTED_BY_SELF ||
-        redirectState == FWPS_CONNECTION_PREVIOUSLY_REDIRECTED_BY_SELF) {
+    if (redirectState != FWPS_CONNECTION_NOT_REDIRECTED) {
         InterlockedIncrement(&g.SkippedLoop);
         return;
     }
@@ -168,11 +174,17 @@ static void NTAPI MproxyClassify(
         goto cleanup;
     }
 
-    /* (4) Original destination for the redirector. Allocated here; ownership passes to WFP with the
-       modified layer data. NOTE FOR REVIEW: confirm the free/ownership contract against the WFP
-       sample (ClassifyFunctions_ProxyCallouts.cpp) before the first VM run; a wrong assumption here
-       is either a leak per connection or a double free. */
-    context = (MPROXY_REDIRECT_CONTEXT*)ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(MPROXY_REDIRECT_CONTEXT), MPROXY_TAG);
+    /* (4) Original destination for the redirector.
+       OWNERSHIP CONTRACT (settled in Phase 8.5 against the documented FWPS_CONNECT_REQUEST0):
+         * the callout allocates it ("a callout driver context area that the callout driver
+           allocated by calling the ExAllocatePoolWithTag function");
+         * "Starting with Windows 8, memory allocated for localRedirectContext will have its
+           ownership taken by WFP, and will be freed when the proxied flow is removed."
+       So: we must NOT free it once it has been handed over with FwpsApplyModifiedLayerData0, and we
+       MUST free it ourselves on any path that fails before that hand-over. That is exactly what the
+       `context = NULL` below and the cleanup block implement.
+       https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/fwpsk/ns-fwpsk-_fwps_connect_request0 */
+    context = (MPROXY_REDIRECT_CONTEXT*)ExAllocatePoolWithTag(NonPagedPoolNx, sizeof(MPROXY_REDIRECT_CONTEXT), MPROXY_TAG);
     if (context == NULL) {
         InterlockedIncrement(&g.Failed);
         goto cleanup; /* fail closed: no redirect, and the service's BLOCK filter denies the flow */
@@ -379,13 +391,28 @@ VOID MproxyEvtDriverUnload(WDFDRIVER driver)
         ExReleaseSpinLockExclusive(&g.TargetLock, irql);
     }
 
+    /* Remove the management-plane callout objects explicitly. The engine session is dynamic, so BFE
+       would remove them when the handle closes, but an explicit delete keeps "no stale WFP objects
+       after unload" true even if the close path is ever changed. Order matters: management objects
+       first, then the kernel registrations. */
+    if (g.EngineHandle != NULL) {
+        FwpmCalloutDeleteByKey0(g.EngineHandle, &MPROXY_CALLOUT_REDIRECT_V4);
+        FwpmCalloutDeleteByKey0(g.EngineHandle, &MPROXY_CALLOUT_REDIRECT_V6);
+    }
+
+    /* FwpsCalloutUnregisterById0 returns STATUS_DEVICE_BUSY while filters still reference the
+       callout or flows are still being classified. The driver must not unload until both succeed;
+       the notifyFn is where a production driver tracks that. REVIEW ITEM for the first VM run:
+       confirm the unload path against Driver Verifier with live flows. */
     if (g.CalloutV4Registered) {
-        FwpsCalloutUnregisterById0(g.CalloutIdV4);
-        g.CalloutV4Registered = FALSE;
+        if (NT_SUCCESS(FwpsCalloutUnregisterById0(g.CalloutIdV4))) {
+            g.CalloutV4Registered = FALSE;
+        }
     }
     if (g.CalloutV6Registered) {
-        FwpsCalloutUnregisterById0(g.CalloutIdV6);
-        g.CalloutV6Registered = FALSE;
+        if (NT_SUCCESS(FwpsCalloutUnregisterById0(g.CalloutIdV6))) {
+            g.CalloutV6Registered = FALSE;
+        }
     }
     if (g.RedirectHandle != NULL) {
         FwpsRedirectHandleDestroy0(g.RedirectHandle);
@@ -452,7 +479,14 @@ NTSTATUS DriverEntry(PDRIVER_OBJECT driverObject, PUNICODE_STRING registryPath)
     }
     WdfControlFinishInitializing(device);
 
-    status = FwpmEngineOpen0(NULL, RPC_C_AUTHN_DEFAULT, NULL, NULL, &g.EngineHandle);
+    /* Dynamic session: every management object this driver adds (the callouts) is removed by BFE
+       when the engine handle closes, including after an abnormal stop. Nothing we create outlives
+       the driver. */
+    {
+        FWPM_SESSION0 session = { 0 };
+        session.flags = FWPM_SESSION_FLAG_DYNAMIC;
+        status = FwpmEngineOpen0(NULL, RPC_C_AUTHN_DEFAULT, NULL, &session, &g.EngineHandle);
+    }
     if (!NT_SUCCESS(status)) {
         return status;
     }

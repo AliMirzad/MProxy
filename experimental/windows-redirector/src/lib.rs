@@ -20,6 +20,8 @@ use std::net::{SocketAddr, TcpStream};
 use std::time::Duration;
 
 pub mod attribution;
+pub mod driver;
+pub mod service;
 
 /// Where a connection's original destination came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

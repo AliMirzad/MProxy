@@ -22,6 +22,10 @@ features = [
 ]
 
 [[bin]]
+name = "routing-service"
+path = "src/bin/routing-service.rs"
+
+[[bin]]
 name = "redirector"
 path = "src/bin/redirector.rs"
 
